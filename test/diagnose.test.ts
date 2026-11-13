@@ -197,3 +197,41 @@ describe('配牌にない牌を1打目に切る', () => {
     expect(issue.message).toContain('ツモ切りなら成り立ちます');
   });
 });
+
+// NAGAで「JSONが間違っています」になった実際の入力（2026/11/14 報告）。下家がポンしたまま流局している
+const PON_THEN_RYUKYOKU_URL = "https://tenhou.net/5/#json=%7B%22title%22%3A%5B%22%22,%22%22%5D,%22name%22%3A%5B%22%E8%87%AA%E5%88%86%22,%22%E4%B8%8B%E5%AE%B6%22,%22%E5%AF%BE%E9%9D%A2%22,%22%E4%B8%8A%E5%AE%B6%22%5D,%22rule%22%3A%7B%22disp%22%3A%22%E8%88%AC%E5%8D%97%E5%96%B0%E8%B5%A4%22,%22aka%22%3A1%7D,%22log%22%3A%5B%5B%5B0,0,0%5D,%5B25000,25000,25000,25000%5D,%5B28%5D,%5B%5D,%5B11,11,12,14,15,19,22,23,24,29,29,37,37%5D,%5B31,46,19,45,33,37,34,27,43%5D,%5B60,60,12,60,60,19,60,60,19%5D,%5B14,15,17,25,25,26,28,33,34,35,36,36,43%5D,%5B47,45,42,39,46,42,18,%22c272628%22,32,%222525p25%22%5D,%5B60,60,60,60,60,60,17,18,43%5D,%5B13,14,16,16,22,23,24,27,27,29,29,32,33%5D,%5B41,41,46,44,32,19,13,22,25%5D,%5B60,60,60,60,60,60,60,60,60%5D,%5B14,15,51,23,24,26,26,27,35,36,38,38,45%5D,%5B43,46,21,32,47,18,%22c131451%22,%22c222324%22%5D,%5B60,60,60,60,60,60,45,27%5D,%5B%22%E5%85%A8%E5%93%A1%E4%B8%8D%E8%81%B4%22%5D%5D%5D%7D";
+
+describe('局の終わり方', () => {
+  const ryukyoku = (u: string, reason = '全員不聴') => {
+    const l = parseTenhou(u);
+    l.result = { raw: [reason, [0, 0, 0, 0]], kind: 'ryukyoku' };
+    const board = logToBoard(l, { haipai: true, draws: true });
+    board.seats.forEach((b) => { b.hand = []; }); // エディタと同じく、配牌とツモだけで入力した状態
+    return { board, names: l.meta.names };
+  };
+  it('鳴いた後に打牌がないまま流局しているとエラー（報告された牌譜）', () => {
+    const { board, names } = ryukyoku(PON_THEN_RYUKYOKU_URL);
+    const issues = diagnose(board, names, { resultEntered: true });
+    expect(issues.find((i) => i.level !== 'warn')).toMatchObject({ seat: 1, area: 'river', index: 9, message: expect.stringContaining('鳴いた後の打牌がない') });
+  });
+  it('山を引き切る前の荒牌流局は注意を出す。途中流局（九種九牌）は出さない', () => {
+    const { board, names } = ryukyoku(SAMPLE_URL, '流局');
+    // 南三局は和了で終わった局。結果だけ流局にすると、最後の打牌の後でツモが残っている
+    const w = diagnose(board, names, { resultEntered: true }).filter((i) => i.area === 'result');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ level: 'warn', message: expect.stringContaining('ツモがまだ') });
+    const k = ryukyoku(SAMPLE_URL, '九種九牌');
+    expect(diagnose(k.board, k.names, { resultEntered: true }).filter((i) => i.area === 'result')).toEqual([]);
+  });
+  it('ちょうど70回ツモって流局した局には注意を出さない', () => {
+    const { board, names } = ryukyoku(SAMPLE_URL, '流局');
+    // 鳴きなしで、親から順に18・18・17・17回ツモって切る（牌の種類はこの確認に関係ない）
+    const dealer = board.setup.kyoku % 4;
+    board.seats.forEach((b, s) => {
+      const n = [18, 18, 17, 17][(s - dealer + 4) % 4];
+      b.river = Array.from({ length: n }, () => ({ tile: 11 }));
+      b.melds = [];
+    });
+    expect(diagnose(board, names, { resultEntered: true }).filter((i) => i.area === 'result')).toEqual([]);
+  });
+});

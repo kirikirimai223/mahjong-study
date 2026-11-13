@@ -267,5 +267,29 @@ function turnIssues(board: BoardSnapshot, nm: (s: Seat) => string, resultEntered
   if (r.kind === 'agari' && r.winner === r.from && cur !== r.winner) {
     reportMissing(missingFrom(cur, r.winner!, false));
   }
+  // チー・ポンした家は必ず続けて切る。局が「鳴いただけ」で終わることはない（流局も自摸和了もできない）
+  const tsumoAfterCall = r.kind === 'agari' && r.winner === r.from && r.winner === cur;
+  if (justCalled && (r.kind !== 'agari' || tsumoAfterCall)) {
+    const n = board.seats[cur].river.length;
+    issues.push({ seat: cur, area: 'river', index: n, message: `${nm(cur)}が鳴いた後の打牌がない（${n + 1}打目）。鳴いたら続けて1枚切ります` });
+  }
+  // 荒牌流局は山を引き切ったときだけ起きる（ツモは嶺上牌を含めて70回）。途中で止めた局は牌譜として成り立たない
+  if (r.kind === 'ryukyoku' && EXHAUSTIVE.has(String(r.raw[0] ?? '流局')) && issues.length === 0) {
+    const draws = countDraws(board);
+    if (draws < WALL_DRAWS) {
+      issues.push({
+        area: 'result', level: 'warn',
+        message: `流局（${r.raw[0]}）だが、ツモがまだ${WALL_DRAWS - draws}回残っている（${draws}/${WALL_DRAWS}回）。山を引き切る前の流局は天鳳の牌譜として成り立たず、NAGAなどで解析できない`,
+      });
+    }
+  }
   return issues;
+}
+
+/** 山を引き切って終わる流局（途中流局は含めない） */
+const EXHAUSTIVE = new Set(['流局', '全員聴牌', '全員不聴', '流し満貫']);
+/** 王牌14枚と配牌52枚を除いた山の枚数＝ツモの回数（槓をすると王牌が補われるので、嶺上牌も含めて数は変わらない） */
+const WALL_DRAWS = 70;
+function countDraws(board: BoardSnapshot): number {
+  try { return replayTurns(board, false).filter((x) => x.kind === 'draw').length; } catch { return WALL_DRAWS; }
 }
