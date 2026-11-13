@@ -4,7 +4,7 @@ import tilesCss from './tiles.css?inline';
 import styleCss from './style.css?inline';
 import { BoardError, seededRandom, effectiveTsumogiri, knownTiles, logToBoard, reconstruct, replayTurns, sortTiles } from '../core/board';
 import { kindOf, tileName } from '../core/types';
-import { diagnose, seatCounts } from '../core/diagnose';
+import { missingDrawTurns, diagnose, seatCounts } from '../core/diagnose';
 import { callOptions, kanOptions } from './calls.js';
 import { SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL } from '../../test/fixtures';
 const SAMPLES = [['南三局（チー・立直）', SAMPLE_URL], ['四槓子（ポン・槓）', KAN_URL], ['嶺上開花', RINSHAN_URL], ['槍槓', CHANKAN_URL]];
@@ -116,11 +116,11 @@ const REL_NAME = ['自家', '下家', '対面', '上家'];
 const seatLabel = (s) => `${state.names[s]}${s === dealer() ? '（親）' : ''}`;
 
 // ---------- 残り枚数 ----------
-function usedCounts() {
+function usedCounts(board = buildBoard()) {
   const c = new Map();
   const add = (t) => { c.set(kindOf(t), (c.get(kindOf(t)) ?? 0) + 1); if (isRed(t)) c.set(t, (c.get(t) ?? 0) + 1); };
   // 配牌の牌は、河・副露・倒した手牌のどれかと同じ牌なので二重に数えない
-  knownTiles(buildBoard()).forEach(add);
+  knownTiles(board).forEach(add);
   state.ui.pendingOwn.forEach(add);
   if (state.ui.pendingDraw) add(state.ui.pendingDraw.tile);
   return c;
@@ -162,7 +162,7 @@ function meldKind(called, own, from, seat) {
 // ---------- 操作 ----------
 function tapPalette(t) {
   const c = usedCounts();
-  if (remaining(t, c) <= 0) return flash(`${tileName(t)}はもう残っていません`);
+  if ((fillingDraw() ? drawSlotRemaining(t) : remaining(t, c)) <= 0) return flash(`${tileName(t)}はもう残っていません`);
   const { seat, mode } = state.ui;
   if (mode === 'hand' && !state.ui.selectedHand) {
     const target = state.ui.handTarget;
@@ -180,7 +180,7 @@ function tapPalette(t) {
     const b = st.seats[seat];
     if (mode === 'river') {
       const sel = st.ui.selected;
-      if (st.ui.riverInsert && sel && sel.seat === seat) {
+      if ((st.ui.riverInsert === 'replace' || st.ui.riverInsert === 'before') && sel && sel.seat === seat) {
         if (st.ui.riverInsert === 'replace') {
           const r = b.river[sel.idx];
           r.tile = t;
@@ -207,6 +207,17 @@ function tapPalette(t) {
       if (st.ui.riverInsert === 'draw' && sel && sel.seat === seat) {
         b.river[sel.idx].draw = t;
         st.ui.riverInsert = null;
+        // 「?」を埋めている途中なら、続けて次の抜けへ
+        if (st.ui.fillingUnknown) {
+          const next = missingDrawTurns(buildBoard())[seat].river[0];
+          if (next !== undefined) {
+            st.ui.selected = { seat, idx: next }; st.ui.riverInsert = 'draw';
+            st.ui.flashAfter = `次は${st.names[seat]}の${next + 1}打目の前にツモった牌を選んでください`;
+          } else {
+            st.ui.fillingUnknown = false; st.ui.selected = null;
+            st.ui.flashAfter = `${st.names[seat]}の「?」はすべて埋まりました`;
+          }
+        }
         return;
       }
       const afterRiichi = b.river.some((r) => r.riichi);
@@ -682,7 +693,7 @@ function handRow(s) {
   const hand = tag + shown.tiles.map((t, i) => (cutting
     ? tileHTML(t, `cuttable ${pick.includes(`h${i}`) ? 'picked' : ''}`, `data-act="${shown.kind === 'meldcut' ? 'meldcut' : meldPick(s) ? 'mpick' : 'cut'}" data-seat="${s}" data-t="${t}" data-key="h${i}"`)
     : tileHTML(t, sh && sh.seat === s && sh.idx === i ? 'sel' : '', `data-act="hand" data-seat="${s}" data-idx="${i}"`))).join('')
-    + (cutting && shown.unknown > 0 ? Array.from({ length: shown.unknown }, () => '<span class="tile ghost unknown"><span class="face">?</span></span>').join('') : '');
+    + (cutting && shown.unknown > 0 ? Array.from({ length: shown.unknown }, () => `<span class="tile ghost unknown" data-act="unk" data-seat="${s}" title="タップしてツモった牌を選ぶ"><span class="face">?</span></span>`).join('') : '');
   // 副露は右端から内側へ順に並ぶ
   const melds = b.melds.map((m, i) => (m.kind === 'kakan' ? '' : `<span class="meld" data-act="meld" data-seat="${s}" data-idx="${i}">${meldTiles(m, s, i)}</span>`))
     .filter(Boolean).reverse().join('');
@@ -745,10 +756,22 @@ function issuesHTML() {
   </div>`;
 }
 
+/**
+ * 河の牌に「その巡のツモ」を後から入れるときの残り枚数。後で切った・手に残った牌をツモに入れても
+ * 卓の牌は増えないので、実際に入れた場合の数え方で残りを出す（「?」を埋めるときに必要）
+ */
+function drawSlotRemaining(t) {
+  const sel = state.ui.selected;
+  const board = structuredClone(buildBoard());
+  board.seats[sel.seat].river[sel.idx].draw = t;
+  return remaining(t, usedCounts(board)) + 1;
+}
+const fillingDraw = () => state.ui.mode === 'river' && state.ui.riverInsert === 'draw' && state.ui.selected;
 function paletteHTML() {
   const c = usedCounts();
+  const drawSlot = fillingDraw();
   return `<div class="palette">${PALETTE.map((row) => `<div class="prow">${row.filter((t) => akaOn() || !isRed(t)).map((t) => {
-    const n = remaining(t, c);
+    const n = drawSlot ? drawSlotRemaining(t) : remaining(t, c);
     return `<button class="pt ${n <= 0 ? 'none-left' : ''}" data-act="pal" data-t="${t}" ${n <= 0 ? 'disabled' : ''}>${tileHTML(t)}<i>${n}</i></button>`;
   }).join('')}</div>`).join('')}</div>`;
 }
@@ -976,6 +999,19 @@ root.addEventListener('click', (ev) => {
         st.ui.callWindow = { from: seat, idx: b.river.length - 1 };
         if (st.ui.autoAdvance) st.ui.seat = (seat + 1) % 4;
       });
+    }
+    case 'unk': {
+      // 手牌の「?」：ツモ牌が入っていない巡を順に選んで、パレットで埋めてもらう
+      ev.stopPropagation();
+      const turns = missingDrawTurns(buildBoard())[seat];
+      if (!turns.river.length) {
+        return flash(turns.kan ? '槓の前のツモ牌が入っていません。副露の槓をタップして「槓の前のツモ」を入れてください'
+          : 'この「?」はツモの抜けではなく、鳴き・槓に使った牌が手牌にないために出ています。入力チェックのエラーを確認してください');
+      }
+      const i = turns.river[0];
+      Object.assign(state.ui, { seat, mode: 'river', selected: { seat, idx: i }, riverInsert: 'draw', fillingUnknown: true, pendingDraw: null, meldPending: null, meldTarget: null, pick: null });
+      render();
+      return flash(`${state.names[seat]}の${i + 1}打目の前にツモった牌を、パレットで選んでください${turns.river.length > 1 ? `（抜けは${turns.river.length}か所）` : ''}`);
     }
     case 'riichinext': state.ui.riichiNext = !state.ui.riichiNext; return render();
     case 'autoadv': state.ui.autoAdvance = !state.ui.autoAdvance; return render();

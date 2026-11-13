@@ -300,29 +300,37 @@ function countDraws(board: BoardSnapshot): number {
  * 抜けていても牌譜は組める（その巡のツモはランダムで補う）ので注意にとどめるが、実際と違う牌譜になる。
  * 鳴いた直後の打牌にはツモがないので数えない。ツモ牌を1つも入れていない家（河だけの入力）も対象外。
  */
-function missingDraws(board: BoardSnapshot, steps: ReturnType<typeof replayTurns>, nm: (s: Seat) => string): Issue[] {
-  const out: Issue[] = [];
-  SEATS.forEach((s) => {
+export function missingDrawTurns(board: BoardSnapshot, steps: ReturnType<typeof replayTurns> = safeSteps(board)): { river: number[]; kan: boolean }[] {
+  return SEATS.map((s) => {
     const b = board.seats[s];
-    if ((b.haipai ?? []).length !== 13 || !b.river.some((r) => r.draw !== undefined)) return;
+    const res = { river: [] as number[], kan: false };
+    if ((b.haipai ?? []).length !== 13 || !b.river.some((r) => r.draw !== undefined)) return res;
     let drew = false;
-    const missing: number[] = [];
-    let kanMissing = false;
     for (const st of steps) {
       if (st.seat !== s) continue;
       if (st.kind === 'draw') drew = true;
       else if (st.kind === 'call') drew = false; // チー・ポンの後はツモなし（明槓は直後に嶺上ツモの draw が来る）
-      else if (st.kind === 'kan') { if (st.meld.draw === undefined) kanMissing = true; drew = false; }
+      else if (st.kind === 'kan') { if (st.meld.draw === undefined) res.kan = true; drew = false; }
       else if (st.kind === 'discard') {
-        if (drew && b.river[st.river].draw === undefined) missing.push(st.river);
+        if (drew && b.river[st.river].draw === undefined) res.river.push(st.river);
         drew = false;
       }
     }
-    if (!missing.length && !kanMissing) return;
+    return res;
+  });
+}
+function safeSteps(board: BoardSnapshot) {
+  try { return replayTurns(board, false); } catch { return []; }
+}
+
+function missingDraws(board: BoardSnapshot, steps: ReturnType<typeof replayTurns>, nm: (s: Seat) => string): Issue[] {
+  const out: Issue[] = [];
+  missingDrawTurns(board, steps).forEach(({ river: missing, kan }, s) => {
+    if (!missing.length && !kan) return;
     const where = missing.map((i) => `${i + 1}打目`).join('・');
     out.push({
-      seat: s, area: 'river', index: missing[0], level: 'warn',
-      message: `${nm(s)}の${where || '槓の前'}のツモ牌が入っていない。手牌の「?」はこの牌で、出力するとランダムで補われる（河のその牌を選んで「ツモを入れる」から直せる）`,
+      seat: s as Seat, area: 'river', index: missing[0], level: 'warn',
+      message: `${nm(s as Seat)}の${where || '槓の前'}のツモ牌が入っていない。手牌の「?」はこの牌で、出力するとランダムで補われる（手牌の「?」をタップして、ツモった牌を選べば埋まる）`,
     });
   });
   return out;
