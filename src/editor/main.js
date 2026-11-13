@@ -1,12 +1,25 @@
 import { parseTenhou, toTenhouJson, toTenhouUrl } from '../core/tenhou';
-import { combineTenhou, nextRound, riichiSeats, tenhouUrlOf } from '../core/game';
-import { newId, openArchive, RECENT_LIMIT, roundOrder } from './archive.js';
+import { nextRound, riichiSeats } from '../core/game';
+import tilesCss from './tiles.css?inline';
+import styleCss from './style.css?inline';
 import { BoardError, seededRandom, effectiveTsumogiri, knownTiles, logToBoard, reconstruct, replayTurns, sortTiles } from '../core/board';
 import { kindOf, tileName } from '../core/types';
 import { diagnose, seatCounts } from '../core/diagnose';
 import { callOptions, kanOptions } from './calls.js';
 import { SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL } from '../../test/fixtures';
 const SAMPLES = [['南三局（チー・立直）', SAMPLE_URL], ['四槓子（ポン・槓）', KAN_URL], ['嶺上開花', RINSHAN_URL], ['槍槓', CHANKAN_URL]];
+
+/**
+ * 牌譜エディタを host の中（Shadow DOM）に作る。
+ * opts.initial … 局のデータ（me/names/rule/setup/seats/result）。なければ空の局
+ * opts.onChange(data) … 入力が変わるたびに呼ぶ（保存はアプリ側）
+ * 返り値の API で、今のデータ・天鳳JSON・次の局のデータを取り出せる
+ */
+export function mountEditor(host, opts = {}) {
+let destroyed = false;
+const listeners = new AbortController(); // destroy で外す（同じ host に載せ直しても古い処理が残らない）
+const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+root.innerHTML = `<style>${tilesCss}${styleCss}</style><div id="app"></div>`;
 
 // ---------- 牌 ----------
 const SUIT_CH = ['萬', '筒', '索'];
@@ -30,6 +43,7 @@ const backHTML = () => '<span class="tile back"><span class="face"></span></span
 const KYOKU = ['東一局', '東二局', '東三局', '東四局', '南一局', '南二局', '南三局', '南四局'];
 const emptySeat = () => ({ haipai: [], river: [], melds: [], hand: [] });
 const STATE_VERSION = 4;
+const DATA_KEYS = ['me', 'names', 'rule', 'setup', 'seats', 'result'];
 const initial = () => ({
   v: STATE_VERSION,
   me: 0,
@@ -40,7 +54,7 @@ const initial = () => ({
   result: { kind: 'none', winner: 0, from: 1, winTile: null, deltas: [0, 0, 0, 0], points: '', yaku: '', reason: '流局' },
   ui: { withDraw: true, autoAdvance: true, callWindow: null, pendingDraw: null, handTarget: 'haipai', seat: 0, mode: 'river', nextFlag: 'auto', selected: null, selectedHand: null, selectedMeld: null, riverInsert: null, pendingOwn: [], ankanNext: false, output: null },
 });
-let state = migrate(load()) ?? initial();
+let state = fromData(opts.initial);
 function migrate(st) {
   if (!st) return st;
   if (st.v >= STATE_VERSION) return st;
@@ -63,12 +77,18 @@ function migrate(st) {
 }
 const history = [];
 
-function load() {
-  try { const s = localStorage.getItem('paifu-editor'); return s ? JSON.parse(s) : null; } catch { return null; }
+/** アプリ側に渡す・受け取る局のデータ（画面の状態 ui は含めない） */
+function fromData(d) {
+  const st = initial();
+  if (d) for (const k of DATA_KEYS) if (d[k] !== undefined) st[k] = structuredClone(d[k]);
+  st.ui.seat = st.me;
+  return migrate(st);
 }
-function save() {
-  try { localStorage.setItem('paifu-editor', JSON.stringify(state)); } catch { /* 保存できない環境では何もしない */ }
-}
+const toData = (st) => structuredClone(Object.fromEntries(DATA_KEYS.map((k) => [k, st[k]])));
+/** 全消去しても残すもの（局・席・名前・ルール・点数は半荘の流れで決まる） */
+const keepIdentity = (st) => ({ me: st.me, names: st.names, rule: st.rule, setup: { ...initial().setup, kyoku: st.setup.kyoku, honba: st.setup.honba, kyotaku: st.setup.kyotaku, scores: st.setup.scores } });
+const save = () => {};
+const changed = () => { if (!destroyed) opts.onChange?.(toData(state)); };
 function commit(fn) {
   history.push(JSON.stringify(state));
   if (history.length > 200) history.shift();
@@ -78,16 +98,16 @@ function commit(fn) {
   delete state.ui.keepClean;
   const msg = state.ui.flashAfter;
   delete state.ui.flashAfter;
-  save();
-render();
+  render();
+  changed();
   if (msg) flash(msg);
 }
 function undo() {
   const prev = history.pop();
   if (!prev) return;
   state = JSON.parse(prev);
-  save();
-render();
+  render();
+  changed();
 }
 
 const dealer = () => state.setup.kyoku % 4;
@@ -322,7 +342,7 @@ function confirmMeld() {
 }
 
 let flashMsg = '';
-function flash(msg) { flashMsg = msg; render(); setTimeout(() => { flashMsg = ''; render(); }, 2600); }
+function flash(msg) { flashMsg = msg; render(); setTimeout(() => { if (destroyed) return; flashMsg = ''; render(); }, 2600); }
 
 function buildBoard() {
   const r = state.result;
@@ -350,20 +370,28 @@ function buildBoard() {
   };
 }
 
+/** 種を変えて2回組み、配牌かツモが変わる家＝ランダムで補った家 */
+function randomizedSeatsOf(board) {
+  const a = reconstruct(board, { random: seededRandom(1) }, state.names);
+  const b = reconstruct(board, { random: seededRandom(2) }, state.names);
+  const key = (log, s) => JSON.stringify([log.seats[s].haipai, log.seats[s].take]);
+  return [0, 1, 2, 3].filter((s) => key(a, s) !== key(b, s));
+}
+
 function runReconstruct() {
   try {
     const board = buildBoard();
     const log = reconstruct(board, {}, state.names);
     // 種を変えて2回組み、違いが出れば「未入力の所をランダムで補った」と分かる
-    const a = JSON.stringify(toTenhouJson(reconstruct(board, { random: seededRandom(1) }, state.names)));
-    const b = JSON.stringify(toTenhouJson(reconstruct(board, { random: seededRandom(2) }, state.names)));
-    state.ui.output = { ok: true, url: toTenhouUrl(log), json: toTenhouJson(log), randomized: a !== b, haipai: log.seats.map((s) => s.haipai) };
+    const randomizedSeats = randomizedSeatsOf(board);
+    state.ui.output = { ok: true, url: toTenhouUrl(log), json: toTenhouJson(log), randomized: randomizedSeats.length > 0, randomizedSeats, haipai: log.seats.map((s) => s.haipai) };
   } catch (e) {
     const named = e instanceof BoardError && e.seat !== undefined && !e.message.startsWith(state.names[e.seat]);
     state.ui.output = { ok: false, message: (named ? `${state.names[e.seat]}：` : '') + e.message, seat: e.seat };
   }
 render();
-  document.getElementById('output')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (state.ui.output?.ok) opts.onOutput?.();
+  root.getElementById('output')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function loadSample(url) {
@@ -372,7 +400,6 @@ function loadSample(url) {
   const raw = log.result.raw;
   commit((st) => {
     Object.assign(st, initial());
-    st.roundId = null; st.gameId = null; // サンプルは記録とは別物として開く
     st.me = Math.max(0, log.meta.names.indexOf('私'));
     st.names = [...log.meta.names];
     st.rule = { ...log.meta.rule };
@@ -386,262 +413,14 @@ function loadSample(url) {
   });
 }
 
-// ---------- 記録（最近の局・半荘） ----------
-const arc = { be: null, recs: [], loading: true, error: null, busy: false };
+// ---------- 局の要約（アプリ側の一覧・保存で使う） ----------
 const roundLabel = (setup) => `${KYOKU[setup.kyoku]}${setup.honba ? ` ${setup.honba}本場` : ''}`;
-const games = () => arc.recs.filter((r) => r.type === 'game').sort((a, b) => b.createdAt - a.createdAt);
-const roundsOf = (gid) => arc.recs.filter((r) => r.type === 'round' && r.gameId === gid).sort(roundOrder);
-const recentRounds = () => arc.recs.filter((r) => r.type === 'round' && !r.gameId).sort((a, b) => b.savedAt - a.savedAt);
-const findRec = (id) => arc.recs.find((r) => r.id === id);
-const hasContent = (st) => st.seats.some((b) => (b.haipai ?? []).length || b.river.length || b.melds.length || b.hand.length);
-const fmtTime = (ms) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-
 function resultSummary(st) {
   const r = st.result;
   if (r.kind === 'agari') return `${st.names[r.winner]}の${Number(r.winner) === Number(r.from) ? 'ツモ' : `ロン（${st.names[r.from]}）`}${r.points ? ` ${r.points}` : ''}`;
   if (r.kind === 'ryukyoku') return r.reason || '流局';
   return '結果未入力';
 }
-
-async function initArchive() {
-  try {
-    arc.be = await openArchive();
-    arc.recs = await arc.be.list();
-  } catch (e) {
-    arc.error = '記録を読み込めませんでした';
-  }
-  arc.loading = false;
-  // 開いていた局・半荘が消えていたら（別の端末で削除など）紐付けを外す
-  if (state.gameId && !findRec(state.gameId)) state.gameId = null;
-  if (state.roundId && !findRec(state.roundId)) state.roundId = null;
-  render();
-}
-
-async function putRec(rec) {
-  await arc.be.put(rec);
-  arc.recs = arc.recs.filter((r) => r.id !== rec.id).concat(rec);
-}
-async function delRec(id) {
-  await arc.be.del(id);
-  arc.recs = arc.recs.filter((r) => r.id !== id);
-}
-async function guarded(fn) {
-  if (!arc.be || arc.busy) return;
-  arc.busy = true; render();
-  try { await fn(); } catch (e) {
-    flash(e?.code === 'quota_exceeded' ? '保存できる量の上限に達しました。古い局や半荘を削除してください' : `保存できませんでした：${e?.message ?? e}`);
-  } finally { arc.busy = false; render(); }
-}
-
-/** いまの局の天鳳JSON（組んだ結果があればそれ、なければ組んでみる。組めなければ null） */
-function currentJson() {
-  if (state.ui.output?.ok && state.ui.output.json) return state.ui.output.json;
-  if (state.result.kind === 'none') return null;
-  try { return toTenhouJson(reconstruct(buildBoard(), {}, state.names)); } catch { return null; }
-}
-
-async function saveCurrent({ quiet = false } = {}) {
-  const now = Date.now();
-  const prev = state.roundId ? findRec(state.roundId) : null;
-  const rec = {
-    type: 'round', id: prev?.id ?? newId(), gameId: state.gameId ?? null,
-    createdAt: prev?.createdAt ?? now, savedAt: now,
-    kyoku: Number(state.setup.kyoku), honba: Number(state.setup.honba),
-    label: roundLabel(state.setup), summary: resultSummary(state),
-    editor: structuredClone({ me: state.me, names: state.names, rule: state.rule, setup: state.setup, seats: state.seats, result: state.result }),
-    json: currentJson(),
-  };
-  await putRec(rec);
-  state.roundId = rec.id;
-  state.ui.dirty = false;
-  // 半荘に入っていない局は新しいものだけ残す
-  for (const old of recentRounds().slice(RECENT_LIMIT)) await delRec(old.id);
-  save();
-  if (!quiet) flash(rec.json ? `${rec.label}を保存しました` : `${rec.label}を下書きとして保存しました（まだ天鳳形式に組めていません）`);
-  return rec;
-}
-
-async function newGame(name) {
-  const now = Date.now();
-  const d = new Date(now);
-  const day = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-  const n = games().filter((g) => g.name.startsWith(day)).length + 1;
-  const g = { type: 'game', id: newId(), name: name || `${day} 半荘${n}`, createdAt: now, savedAt: now, names: [...state.names] };
-  await putRec(g);
-  return g;
-}
-
-/** 結果から次の局を始める（いまの局は保存して半荘に入れる。半荘がなければ作る） */
-async function goNextRound() {
-  if (state.result.kind === 'none') return flash('先に局の結果を入力してください');
-  const board = buildBoard();
-  const r = state.result;
-  const nx = nextRound(board.setup, {
-    kind: r.kind, winners: r.kind === 'agari' ? [Number(r.winner)] : [], reason: r.reason, deltas: r.deltas.map(Number),
-  }, riichiSeats(board));
-  let made = null;
-  if (!state.gameId) { made = await newGame(); state.gameId = made.id; }
-  const rec = await saveCurrent({ quiet: true });
-  if (nx.finished) { save(); return flash(`${rec.label}を保存しました。南四局が終わったので半荘はここまでです`); }
-  const keep = { me: state.me, names: state.names, rule: state.rule, gameId: state.gameId };
-  history.push(JSON.stringify(state));
-  Object.assign(state, initial(), keep);
-  state.setup = { ...nx.setup, doraIndicators: [], uraIndicators: [] };
-  state.roundId = null;
-  state.ui.seat = state.me;
-  state.ui.archiveOpen = false;
-  state.ui.dirty = false;
-  save();
-  const note = nx.ambiguous ? '（収支がすべて0なので親流れにしました。全員聴牌なら局を戻してください）' : '';
-  flash(`${made ? `半荘「${made.name}」を作って` : ''}${rec.label}を保存。${roundLabel(state.setup)}を始めます${note}`);
-}
-
-function openRound(rec) {
-  history.push(JSON.stringify(state));
-  const e = structuredClone(rec.editor);
-  Object.assign(state, initial(), { me: e.me, names: e.names, rule: e.rule, setup: e.setup, seats: e.seats, result: e.result });
-  state.roundId = rec.id;
-  state.gameId = rec.gameId ?? null;
-  state.ui.seat = state.me;
-  state.ui.archiveOpen = false;
-  state.ui.dirty = false;
-  save();
-  render();
-  flash(`${rec.label}を開きました`);
-}
-
-function blankRound() {
-  history.push(JSON.stringify(state));
-  const keep = { me: state.me, names: state.names, rule: state.rule, gameId: state.gameId };
-  Object.assign(state, initial(), keep);
-  state.roundId = null;
-  state.ui.seat = state.me;
-  state.ui.archiveOpen = false;
-  state.ui.dirty = false;
-  save();
-  render();
-}
-
-/** 消える操作（未保存の変更を捨てる・削除）は2回押しで確定 */
-function armed(key) {
-  if (state.ui.armed === key) { state.ui.armed = null; return true; }
-  state.ui.armed = key;
-  render();
-  setTimeout(() => { if (state.ui.armed === key) { state.ui.armed = null; render(); } }, 4000);
-  return false;
-}
-const needsDiscard = () => state.ui.dirty && hasContent(state);
-
-function gameExport(gid) {
-  const g = findRec(gid);
-  const rs = roundsOf(gid);
-  const ok = rs.filter((r) => r.json);
-  if (!ok.length) return null;
-  const json = combineTenhou(ok.map((r) => r.json), [g?.name ?? '', '']);
-  return { json, url: tenhouUrlOf(json), missing: rs.filter((r) => !r.json).map((r) => r.label) };
-}
-
-async function downloadJson(filename, obj) {
-  const dl = await window.claude?.use?.('downloads').catch(() => null);
-  const data = JSON.stringify(obj);
-  if (!dl) {
-    navigator.clipboard?.writeText(data).then(() => flash('この画面ではファイル保存が使えないので、JSONをコピーしました'), () => flash('ファイル保存が使えません'));
-    return;
-  }
-  try { await dl.save({ filename, data }); } catch (e) { if (e?.code !== 'declined') flash('ファイルを保存できませんでした'); }
-}
-
-function archiveHTML() {
-  if (!state.ui.archiveOpen) return '';
-  if (arc.loading) return '<div class="arc"><p class="hint">記録を読み込んでいます…</p></div>';
-  if (arc.error) return `<div class="arc"><p class="hint">${arc.error}</p></div>`;
-  const dis = arc.busy ? 'disabled' : '';
-  const cur = state.roundId ? findRec(state.roundId) : null;
-  const status = !cur ? '未保存' : state.ui.dirty ? '保存後に変更あり' : '保存済み';
-  const g = state.gameId ? findRec(state.gameId) : null;
-  const arm = (k, label, armedLabel) => (state.ui.armed === k ? armedLabel : label);
-  const roundRow = (r, inGame) => `<li class="${r.id === state.roundId ? 'cur' : ''}">
-      <div class="rt"><b>${r.label}</b><small>${r.summary}${r.json ? '' : ' ・下書き'}</small><small>${fmtTime(r.savedAt)}</small></div>
-      <div class="ra">
-        ${r.id === state.roundId ? '<span class="tag">編集中</span>' : `<button data-act="arcopen" data-v="${r.id}" ${dis}>${needsDiscard() && state.ui.armed === `open:${r.id}` ? '変更を捨てて開く' : '開く'}</button>`}
-        ${r.json ? `<button data-act="arcurl" data-v="${r.id}">URL</button>` : ''}
-        ${!inGame && g ? `<button data-act="arcadd" data-v="${r.id}" ${dis}>半荘へ</button>` : ''}
-        ${inGame ? `<button data-act="arcout" data-v="${r.id}" ${dis}>${arm(`out:${r.id}`, '外す', '本当に外す')}</button>` : ''}
-        <button data-act="arcdel" data-v="${r.id}" class="danger" ${dis}>${arm(`del:${r.id}`, '削除', '本当に削除')}</button>
-      </div></li>`;
-  let gameSec;
-  if (g) {
-    const rs = roundsOf(g.id);
-    const ex = state.ui.gameOut === g.id ? gameExport(g.id) : null;
-    gameSec = `<section><h3>半荘 <input class="gname" data-act="gname" value="${g.name.replace(/"/g, '&quot;')}" aria-label="半荘の名前"></h3>
-      ${rs.length ? `<ol class="rounds">${rs.map((r) => roundRow(r, true)).join('')}</ol>` : '<p class="hint">まだ局がありません。局を保存するとこの半荘に入ります</p>'}
-      <div class="seg">
-        <button data-act="gameout" ${rs.some((r) => r.json) ? '' : 'disabled'}>半荘をまとめて出力</button>
-        <button data-act="gameclose" ${dis}>半荘から抜ける</button>
-        <button data-act="gamedel" class="danger" ${dis}>${arm(`gdel:${g.id}`, '半荘を削除', '局ごと本当に削除')}</button>
-      </div>
-      ${ex ? `<div class="out good">
-        <p>${rs.filter((r) => r.json).length}局を1つの牌譜にまとめました。${ex.missing.length ? `<br><small>組めていない局は入っていません：${ex.missing.join('、')}</small>` : ''}</p>
-        <div class="seg"><button data-act="gamecopy">URLをコピー</button><button data-act="gamejson">JSONを保存</button><a href="${ex.url}" target="_blank" rel="noopener">天鳳で開く</a></div>
-        <p class="hint">NAGAには1局ずつ貼る場合、各局の「URL」を使ってください</p>
-      </div>` : ''}
-    </section>`;
-  } else {
-    const gs = games();
-    gameSec = `<section><h3>半荘</h3>
-      <p class="hint">「次の局へ」を押すと、半荘を作って局を順に入れていきます</p>
-      <div class="seg"><button data-act="gamenew" ${dis}>新しい半荘を始める</button></div>
-      ${gs.length ? `<ul class="games">${gs.map((x) => `<li><div class="rt"><b>${x.name}</b><small>${roundsOf(x.id).length}局</small></div><div class="ra"><button data-act="gameopen" data-v="${x.id}" ${dis}>開く</button></div></li>`).join('')}</ul>` : ''}
-    </section>`;
-  }
-  const recents = recentRounds();
-  return `<div class="arc">
-    <section class="now">
-      <div class="rt"><b>この局：${roundLabel(state.setup)}</b><small>${status}${g ? `・${g.name}` : ''}</small></div>
-      <div class="seg">
-        <button data-act="arcsave" ${dis}>保存</button>
-        <button data-act="arcnext" ${dis} ${state.result.kind === 'none' ? 'disabled' : ''}>保存して次の局へ</button>
-        <button data-act="arcblank" ${dis}>${needsDiscard() && state.ui.armed === 'blank' ? '変更を捨てて新しい局' : '新しい局'}</button>
-      </div>
-    </section>
-    ${gameSec}
-    <section><h3>最近の局 <small>（半荘に入れていない局を${RECENT_LIMIT}局まで）</small></h3>
-      ${recents.length ? `<ul class="rounds">${recents.map((r) => roundRow(r, false)).join('')}</ul>` : '<p class="hint">保存した局はまだありません</p>'}
-    </section>
-    <p class="hint">${arc.be?.kind === 'db' ? 'あなたのアカウントに保存しています（他の人からは見えません）' : 'このブラウザに保存しています'}</p>
-  </div>`;
-}
-
-async function archiveAction(a, v, el) {
-  switch (a) {
-    case 'arctoggle': state.ui.archiveOpen = !state.ui.archiveOpen; state.ui.gameOut = null; return render();
-    case 'arcsave': return guarded(() => saveCurrent());
-    case 'arcnext': return guarded(goNextRound);
-    case 'arcblank': if (needsDiscard() && !armed('blank')) return; return blankRound();
-    case 'arcopen': { const r = findRec(v); if (!r) return; if (needsDiscard() && !armed(`open:${v}`)) return; return openRound(r); }
-    case 'arcurl': { const r = findRec(v); if (!r?.json) return; return navigator.clipboard?.writeText(tenhouUrlOf(r.json)).then(() => flash(`${r.label}のURLをコピーしました`), () => flash('コピーできませんでした')); }
-    case 'arcadd': return guarded(async () => { const r = findRec(v); await putRec({ ...r, gameId: state.gameId }); if (r.id === state.roundId) save(); });
-    case 'arcout': if (!armed(`out:${v}`)) return; return guarded(async () => { const r = findRec(v); await putRec({ ...r, gameId: null }); });
-    case 'arcdel': if (!armed(`del:${v}`)) return; return guarded(async () => { await delRec(v); if (state.roundId === v) { state.roundId = null; state.ui.dirty = true; save(); } });
-    case 'gamenew': return guarded(async () => { const g = await newGame(); state.gameId = g.id; if (state.roundId) { const r = findRec(state.roundId); await putRec({ ...r, gameId: g.id }); } save(); });
-    case 'gameopen': state.gameId = v; state.ui.gameOut = null; save(); return render();
-    case 'gameclose': state.gameId = null; state.ui.gameOut = null; save(); return render();
-    case 'gamedel': {
-      const gid = state.gameId;
-      if (!armed(`gdel:${gid}`)) return;
-      return guarded(async () => {
-        for (const r of roundsOf(gid)) await delRec(r.id);
-        await delRec(gid);
-        if (state.roundId && !findRec(state.roundId)) { state.roundId = null; state.ui.dirty = true; }
-        state.gameId = null; save();
-      });
-    }
-    case 'gameout': state.ui.gameOut = state.ui.gameOut === state.gameId ? null : state.gameId; return render();
-    case 'gamecopy': { const ex = gameExport(state.gameId); return ex && navigator.clipboard?.writeText(ex.url).then(() => flash('半荘のURLをコピーしました'), () => flash('コピーできませんでした')); }
-    case 'gamejson': { const ex = gameExport(state.gameId); const g = findRec(state.gameId); return ex && downloadJson(`${(g?.name ?? 'hanchan').replace(/[\\/:*?"<>|]/g, '-')}.json`, ex.json); }
-  }
-}
-const ARCHIVE_ACTS = new Set(['arctoggle', 'arcsave', 'arcnext', 'arcblank', 'arcopen', 'arcurl', 'arcadd', 'arcout', 'arcdel', 'gamenew', 'gameopen', 'gameclose', 'gamedel', 'gameout', 'gamecopy', 'gamejson']);
 
 // ---------- 描画：卓 ----------
 const WIND = ['東', '南', '西', '北'];
@@ -1043,7 +822,7 @@ function outputHTML() {
   if (!o) return '';
   if (!o.ok) return `<div id="output" class="out bad">組めませんでした：${o.message}</div>`;
   return `<div id="output" class="out good">
-    <p>${o.randomized ? '天鳳形式で出力しました。入力していない配牌・ツモはランダムで補っています（もう一度押すと補い方が変わります）。' : '天鳳形式で出力しました。すべて入力どおりで、ランダムで補った所はありません。'}<br><small>保存は上の「記録」から</small></p>
+    <p>${o.randomized ? '天鳳形式で出力しました。入力していない配牌・ツモはランダムで補っています（もう一度押すと補い方が変わります）。' : '天鳳形式で出力しました。すべて入力どおりで、ランダムで補った所はありません。'}<br><small>この結果は上の「保存」で局に残ります</small></p>
     <div class="haipai">${o.haipai.map((h, s) => `<div><b>${state.names[s]}の開始時の手牌</b>${h.map((t) => tileHTML(t, 'mini')).join('')}</div>`).join('')}</div>
     <div class="seg"><button data-act="copy">URLをコピー</button><a href="${o.url}" target="_blank" rel="noopener">天鳳の牌譜エディタで開く</a></div>
     <textarea readonly rows="3" class="url">${o.url}</textarea>
@@ -1061,23 +840,22 @@ function render() {
   currentCounts = seatCounts(board);
   updateAngle();
 
-  const app = document.getElementById('app');
-  if (!document.getElementById('table')) {
-    app.innerHTML = `<header id="hdr"></header><div id="archive"></div><div id="setup"></div>
+  const app = root.getElementById('app');
+  if (!root.getElementById('table')) {
+    app.innerHTML = `<header id="hdr"></header><div id="setup"></div>
       <div class="table-wrap"><div id="table"></div></div><div id="dock"></div>`;
   }
-  document.getElementById('hdr').innerHTML = `<h1>牌譜エディタ</h1>
-    <div class="tools"><button data-act="arctoggle" class="${state.ui.archiveOpen ? 'on' : ''}">記録${state.gameId && findRec(state.gameId) ? `・${roundsOf(state.gameId).length}局` : ''}</button><button data-act="undo" ${history.length ? '' : 'disabled'}>戻す</button><select data-act="samplesel" aria-label="サンプル"><option value="">サンプル</option>${SAMPLES.map(([n], i) => `<option value="${i}">${n}</option>`).join('')}</select><button data-act="clear">全消去</button></div>`;
-  document.getElementById('archive').innerHTML = archiveHTML();
-  document.getElementById('setup').innerHTML = setupHTML();
-  const table = document.getElementById('table');
+  root.getElementById('hdr').innerHTML = `<h1>牌譜の入力</h1>
+    <div class="tools"><button data-act="undo" ${history.length ? '' : 'disabled'}>戻す</button><select data-act="samplesel" aria-label="サンプル"><option value="">サンプル</option>${SAMPLES.map(([n], i) => `<option value="${i}">${n}</option>`).join('')}</select><button data-act="clear">全消去</button></div>`;
+  root.getElementById('setup').innerHTML = setupHTML();
+  const table = root.getElementById('table');
   table.style.transform = `rotate(${tableAngle}deg)`;
   table.innerHTML = [0, 1, 2, 3].map(layerHTML).join('') + centerHTML();
   const seatTab = (s) => {
     const bad = currentIssues.some((i) => i.seat === s && i.level !== 'warn');
     return `<button data-act="pickseat" data-v="${s}" class="${state.ui.seat === s ? 'on' : ''} ${bad ? 'ng' : ''}">${windOf(s)} ${state.names[s]}<small>${REL_NAME[rel(s)]}</small></button>`;
   };
-  document.getElementById('dock').innerHTML = `
+  root.getElementById('dock').innerHTML = `
     <div class="tabs seats">${[0, 1, 2, 3].map(seatTab).join('')}</div>
     <div class="tabs modes">${MODES.map(([k, v]) => `<button data-act="mode" data-v="${k}" class="${mode === k ? 'on' : ''}">${v}</button>`).join('')}</div>
     ${mode === 'result' ? resultHTML() : contextHTML()}
@@ -1087,19 +865,18 @@ function render() {
     <button class="go" data-act="build" ${currentIssues.some((i) => i.level !== 'warn') || !resultEntered ? 'disabled' : ''}>天鳳形式で出力<small>未入力の配牌・ツモはランダムで補います</small></button>
     ${outputHTML()}
     ${flashMsg ? `<div class="flash">${flashMsg}</div>` : ''}`;
-  const det = document.querySelector('details.setup');
+  const det = root.querySelector('details.setup');
   if (det) det.addEventListener('toggle', () => { state.ui.setupOpen = det.open; });
 }
 
 // ---------- イベント ----------
-document.addEventListener('click', (ev) => {
+root.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
   if (!el) return;
   const a = el.dataset.act;
   const v = el.dataset.v;
   const seat = Number(el.dataset.seat);
   const idx = Number(el.dataset.idx);
-  if (ARCHIVE_ACTS.has(a)) return archiveAction(a, v, el);
   switch (a) {
     case 'pal': return tapPalette(Number(el.dataset.t));
     case 'pickseat': return focus(Number(v), state.ui.mode === 'result' || state.ui.mode === 'win' || state.ui.mode === 'dora' || state.ui.mode === 'ura' ? 'river' : state.ui.mode);
@@ -1347,24 +1124,18 @@ document.addEventListener('click', (ev) => {
       if (is.area === 'hand' && state.seats[is.seat]?.hand.length) state.ui.handTarget = 'hand';
       if (is.area === 'river' && is.index !== undefined && is.index < state.seats[is.seat].river.length) state.ui.selected = { seat: is.seat, idx: is.index };
     render();
-      document.querySelector('.table-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      root.querySelector('.table-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     case 'copy':
       navigator.clipboard?.writeText(state.ui.output.url).then(() => flash('コピーしました'), () => flash('コピーできませんでした。下の欄から選択してコピーしてください'));
       return;
     case 'undo': return undo();
-    case 'clear': return commit((st) => { Object.assign(st, initial()); st.roundId = null; });
+    case 'clear': return commit((st) => { Object.assign(st, initial(), keepIdentity(st)); });
   }
-});
+}, { signal: listeners.signal });
 
-document.addEventListener('change', (ev) => {
-  if (ev.target.dataset?.act === 'gname') {
-    const g = findRec(state.gameId);
-    const name = ev.target.value.trim();
-    if (g && name && name !== g.name) guarded(() => putRec({ ...g, name, savedAt: Date.now() }));
-    return;
-  }
+root.addEventListener('change', (ev) => {
   if (ev.target.dataset?.act === 'akasel') {
     const on = ev.target.value === '1';
     return commit((st) => {
@@ -1403,8 +1174,40 @@ document.addEventListener('change', (ev) => {
     const last = path.at(-1);
     o[last] = el.type === 'number' || el.tagName === 'SELECT' ? Number(el.value) : el.value;
   });
-});
+}, { signal: listeners.signal });
 
-window.__paifuEditor = { options: () => uiOptions, state: () => state, archive: () => arc }; // 自動テスト用
+host.__paifuEditor = { options: () => uiOptions, state: () => state }; // 自動テスト用
 render();
-initArchive();
+
+return {
+  getData: () => toData(state),
+  setData(d) { state = fromData(d); history.length = 0; render(); },
+  /** 局の見出しと結果の要約（一覧用） */
+  summary: () => ({ label: roundLabel(state.setup), summary: resultSummary(state), kyoku: Number(state.setup.kyoku), honba: Number(state.setup.honba) }),
+  /** 「天鳳形式で出力」を押した後で入力が変わっていなければ、その結果 */
+  outputJson() { const o = state.ui.output; return o?.ok && o.json ? { json: o.json, randomizedSeats: o.randomizedSeats ?? [] } : null; },
+  /** 天鳳JSON。出力済みならそれ、なければ組む。組めなければ error */
+  buildJson() {
+    const o = state.ui.output;
+    if (o?.ok && o.json) return { json: o.json, randomizedSeats: o.randomizedSeats ?? [] };
+    if (state.result.kind === 'none') return { error: '結果が未入力' };
+    if (currentIssues.some((i) => i.level !== 'warn')) return { error: '入力に矛盾がある' };
+    try {
+      const board = buildBoard();
+      return { json: toTenhouJson(reconstruct(board, {}, state.names)), randomizedSeats: randomizedSeatsOf(board) };
+    } catch (e) { return { error: e.message }; }
+  },
+  /** 結果から次の局のデータ（点数・局・本場を引き継いだ空の局） */
+  nextData() {
+    if (state.result.kind === 'none') return { error: '先に局の結果を入力してください' };
+    const board = buildBoard();
+    const r = state.result;
+    const nx = nextRound(board.setup, { kind: r.kind, winners: r.kind === 'agari' ? [Number(r.winner)] : [], reason: r.reason, deltas: r.deltas.map(Number) }, riichiSeats(board));
+    const next = initial();
+    Object.assign(next, { me: state.me, names: state.names, rule: state.rule, setup: { ...nx.setup, doraIndicators: [], uraIndicators: [] } });
+    return { data: toData(next), finished: nx.finished, ambiguous: nx.ambiguous, label: roundLabel(next.setup) };
+  },
+  flash,
+  destroy() { destroyed = true; listeners.abort(); root.innerHTML = ''; delete host.__paifuEditor; },
+};
+}
