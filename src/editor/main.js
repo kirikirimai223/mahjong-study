@@ -735,7 +735,7 @@ function issuesHTML() {
   const errors = currentIssues.filter((i) => i.level !== 'warn');
   const warns = currentIssues.filter((i) => i.level === 'warn');
   const warnHTML = warns.map((i) => `<button class="issue warn" data-act="goissue" data-v="${currentIssues.indexOf(i)}">${i.message}</button>`).join('');
-  if (errors.length === 0) return `<div class="issues ok">入力に矛盾はありません${warnHTML}</div>`;
+  if (errors.length === 0) return `<div class="issues ok">${warns.length ? `矛盾はありませんが、注意が${warns.length}件あります` : "入力に矛盾はありません"}${warnHTML}</div>`;
   const open = state.ui.issuesOpen;
   const list = open ? errors : errors.slice(0, 2);
   return `<div class="issues">
