@@ -235,3 +235,26 @@ describe('局の終わり方', () => {
     expect(diagnose(board, names, { resultEntered: true }).filter((i) => i.area === 'result')).toEqual([]);
   });
 });
+
+describe('ツモ牌の抜け（手牌に「?」が出る原因）', () => {
+  const full = (u: string) => {
+    const l = parseTenhou(u);
+    const board = logToBoard(l, { haipai: true, draws: true });
+    board.seats.forEach((b) => { b.hand = []; });
+    return { board, names: l.meta.names };
+  };
+  it.each([['南三局', SAMPLE_URL], ['四槓子', KAN_URL], ['嶺上開花', RINSHAN_URL], ['槍槓', CHANKAN_URL]])('%s：全巡のツモが入っていれば注意は出ない（鳴いた直後の打牌はツモなしで正しい）', (_, u) => {
+    const { board, names } = full(u);
+    expect(diagnose(board, names).filter((i) => i.message.includes('ツモ牌が入っていない'))).toEqual([]);
+  });
+  it('普通の巡のツモ牌が抜けていると、その家と何打目かを注意で示す（出力は止めない）', () => {
+    const { board, names } = full(SAMPLE_URL);
+    const s = board.seats.findIndex((b) => b.river.filter((r) => r.draw !== undefined).length > 5);
+    const i = board.seats[s].river.findIndex((r, k) => k > 2 && r.draw !== undefined);
+    delete board.seats[s].river[i].draw;
+    delete board.seats[s].river[i].tsumogiri;
+    const w = diagnose(board, names).filter((x) => x.message.includes('ツモ牌が入っていない'));
+    expect(w).toEqual([expect.objectContaining({ seat: s, area: 'river', index: i, level: 'warn', message: expect.stringContaining(`${i + 1}打目`) })]);
+    expect(diagnose(board, names).filter((x) => x.level !== 'warn')).toEqual([]);
+  });
+});

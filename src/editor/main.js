@@ -195,6 +195,10 @@ function tapPalette(t) {
           for (const x of st.seats) for (const m of x.melds) {
             if (m.from === seat && m.riverIndex >= sel.idx) m.riverIndex++;
           }
+          // 自分の槓（何打目の後か）も、前に1枚入ったぶん後ろにずらす
+          for (const m of b.melds) {
+            if (m.afterOwnDiscard !== undefined && m.afterOwnDiscard > sel.idx) m.afterOwnDiscard++;
+          }
           if (before && before.riichi === undefined && b.river.slice(0, sel.idx).some((r) => r.riichi)) b.river[sel.idx].tsumogiri = true;
         }
         st.ui.riverInsert = null;
@@ -989,6 +993,7 @@ root.addEventListener('click', (ev) => {
         b.melds = b.melds.filter((m) => !(m.from === o.from && m.riverIndex === o.idx));
         b.melds.push({ kind: o.kind, from: o.from, riverIndex: o.idx, called: r.tile, own: [...o.own] });
         b.river.push({ tile, tsumogiri: false }); // 鳴いた直後はツモがないので手出し
+        if (st.ui.pendingDraw && st.ui.pendingDraw.seat === o.seat) st.ui.flashAfter = `鳴いたので、選んでいたツモ（${tileName(st.ui.pendingDraw.tile)}）は取り消しました`;
         st.ui.meldPending = null; st.ui.meldTarget = null; st.ui.pick = null; st.ui.pendingOwn = [];
         st.ui.pendingDraw = null; st.ui.mode = 'river'; st.ui.selected = null;
         st.ui.callWindow = { from: o.seat, idx: b.river.length - 1 };
@@ -999,6 +1004,8 @@ root.addEventListener('click', (ev) => {
       ev.stopPropagation();
       if (seat !== state.ui.seat) return focus(seat, 'meld', { meldTarget: state.ui.meldTarget });
       const key = el.dataset.key;
+      // チー・ポン・明槓にツモ牌は使えない（鳴くときはツモらない）。ツモ牌を使えるのは暗槓・加槓だけ
+      if (key === 'd' && state.ui.meldTarget) return flash('ツモ牌はチー・ポンに使えません。鳴いたらツモはないので、ツモ牌は取り消されます');
       const cur = state.ui.pick && state.ui.pick.seat === seat ? state.ui.pick.keys : [];
       state.ui.pick = { seat, keys: cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key] };
       return render();
@@ -1093,6 +1100,8 @@ root.addEventListener('click', (ev) => {
         if (seat === state.ui.seat) return flash('鳴く牌は相手の河からタップしてください');
         if (state.seats[seat].river[idx].calledBy !== undefined && state.seats[seat].river[idx].calledBy !== state.ui.seat) return flash('その牌はもう鳴かれています');
         state.ui.meldTarget = { from: seat, idx };
+        // 先にツモ牌を選んでいたら、鳴きの牌からは外す（ツモ牌はチー・ポンに使えない）
+        if (state.ui.pick && state.ui.pick.keys.includes('d')) state.ui.pick = { ...state.ui.pick, keys: state.ui.pick.keys.filter((k) => k !== 'd') };
         return render();
       }
       // 他家の河：視点を移してその牌を選ぶ。正面の河：選択の切り替え

@@ -150,6 +150,7 @@ export function diagnose(board: BoardSnapshot, names: readonly string[], opts: D
         issues.push(issue);
       }
     });
+    issues.push(...missingDraws(board, steps, nm));
   }
 
   // 6. 結果
@@ -292,4 +293,37 @@ const EXHAUSTIVE = new Set(['流局', '全員聴牌', '全員不聴', '流し満
 const WALL_DRAWS = 70;
 function countDraws(board: BoardSnapshot): number {
   try { return replayTurns(board, false).filter((x) => x.kind === 'draw').length; } catch { return WALL_DRAWS; }
+}
+
+/**
+ * ツモ牌を入れて入力している家で、ツモ牌が抜けている巡を知らせる（手牌に「?」が出る原因）。
+ * 抜けていても牌譜は組める（その巡のツモはランダムで補う）ので注意にとどめるが、実際と違う牌譜になる。
+ * 鳴いた直後の打牌にはツモがないので数えない。ツモ牌を1つも入れていない家（河だけの入力）も対象外。
+ */
+function missingDraws(board: BoardSnapshot, steps: ReturnType<typeof replayTurns>, nm: (s: Seat) => string): Issue[] {
+  const out: Issue[] = [];
+  SEATS.forEach((s) => {
+    const b = board.seats[s];
+    if ((b.haipai ?? []).length !== 13 || !b.river.some((r) => r.draw !== undefined)) return;
+    let drew = false;
+    const missing: number[] = [];
+    let kanMissing = false;
+    for (const st of steps) {
+      if (st.seat !== s) continue;
+      if (st.kind === 'draw') drew = true;
+      else if (st.kind === 'call') drew = false; // チー・ポンの後はツモなし（明槓は直後に嶺上ツモの draw が来る）
+      else if (st.kind === 'kan') { if (st.meld.draw === undefined) kanMissing = true; drew = false; }
+      else if (st.kind === 'discard') {
+        if (drew && b.river[st.river].draw === undefined) missing.push(st.river);
+        drew = false;
+      }
+    }
+    if (!missing.length && !kanMissing) return;
+    const where = missing.map((i) => `${i + 1}打目`).join('・');
+    out.push({
+      seat: s, area: 'river', index: missing[0], level: 'warn',
+      message: `${nm(s)}の${where || '槓の前'}のツモ牌が入っていない。手牌の「?」はこの牌で、出力するとランダムで補われる（河のその牌を選んで「ツモを入れる」から直せる）`,
+    });
+  });
+  return out;
 }
