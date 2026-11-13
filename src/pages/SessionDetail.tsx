@@ -17,6 +17,8 @@ export function SessionDetail() {
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reviewed, setReviewed] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     const ses = await supabase.from('study_sessions').select('*').eq('id', id!).maybeSingle();
@@ -31,6 +33,10 @@ export function SessionDetail() {
     const r = await supabase.from('study_rounds').select(ROUND_LIST_COLS).in('game_id', ids);
     if (r.error) return setErr(errorText(r.error));
     setRounds(r.data as RoundListRow[]);
+    const rids = (r.data as RoundListRow[]).map((x) => x.id);
+    if (!rids.length) return setReviewed(new Set());
+    const rv = await supabase.from('study_ai_reviews').select('round_id').in('round_id', rids);
+    if (!rv.error) setReviewed(new Set((rv.data as { round_id: string }[]).map((x) => x.round_id)));
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
@@ -42,11 +48,19 @@ export function SessionDetail() {
       {err && <p className="bad">{err}</p>}
       {s && (
         <>
-          <h2>{fmtDate(s.held_on)} {s.title}</h2>
-          {s.participants.length > 0 && <p className="quiet">参加者：{s.participants.join('・')}</p>}
+          <div className="row between">
+            <h2>{fmtDate(s.held_on)} {s.title}</h2>
+            <button onClick={() => setEditing((v) => !v)}>{editing ? '閉じる' : '編集'}</button>
+          </div>
+          {editing
+            ? <EditSession session={s} gameIds={games.map((g) => g.id)} onSaved={() => { setEditing(false); load(); }} />
+            : <>
+              {s.participants.length > 0 && <p className="quiet">参加者：{s.participants.join('・')}</p>}
+              {s.note && <p className="note">{s.note}</p>}
+            </>}
           {games.length === 0 && <p className="quiet">まだ半荘がありません。「新しい半荘」から始めてください。</p>}
           {games.map((g, i) => (
-            <GameCard key={g.id} game={g} index={i} rounds={rounds.filter((r) => r.game_id === g.id).sort(roundOrder)} onChanged={load} flash={flash} />
+            <GameCard key={g.id} game={g} index={i} rounds={rounds.filter((r) => r.game_id === g.id).sort(roundOrder)} reviewed={reviewed} onChanged={load} flash={flash} />
           ))}
           {adding
             ? <NewGame session={s} count={games.length} onCancel={() => setAdding(false)} />
@@ -109,9 +123,10 @@ function NewGame({ session, count, onCancel }: { session: StudySession; count: n
   );
 }
 
-function GameCard({ game, index, rounds, onChanged, flash }: {
-  game: Game; index: number; rounds: RoundListRow[]; onChanged: () => void; flash: (m: string) => void;
+function GameCard({ game, index, rounds, reviewed, onChanged, flash }: {
+  game: Game; index: number; rounds: RoundListRow[]; reviewed: Set<string>; onChanged: () => void; flash: (m: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const nav = useNavigate();
   const { confirm, isArmed } = useConfirm();
   const [showOut, setShowOut] = useState(false);
@@ -143,15 +158,18 @@ function GameCard({ game, index, rounds, onChanged, flash }: {
     <section className="card stack game">
       <div className="row between">
         <h3>{game.name || `半荘${index + 1}`}</h3>
-        <small className="quiet">{game.player_names.join('・')}{game.rule.aka === 0 ? '・赤なし' : ''}</small>
+        <button className="small-btn" onClick={() => setEditing((v) => !v)}>{editing ? '閉じる' : '編集'}</button>
       </div>
+      {editing
+        ? <EditGame game={game} onSaved={() => { setEditing(false); onChanged(); }} />
+        : <small className="quiet">{game.player_names.join('・')}{game.rule.aka === 0 ? '・赤なし' : ''}</small>}
       {rounds.length === 0 && <p className="quiet small">局がありません</p>}
       <ol className="rounds">
         {rounds.map((r) => (
           <li key={r.id}>
             <Link to={`/rounds/${r.id}`} className="rt">
               <b>{r.label}</b>
-              <small>{r.summary}{r.tenhou_json ? (r.randomized_seats.length ? '・一部ランダムで補完' : '') : '・未出力'}</small>
+              <small>{r.summary}{r.tenhou_json ? (r.randomized_seats.length ? '・一部ランダムで補完' : '') : '・未出力'}{reviewed.has(r.id) ? '・解析あり' : ''}</small>
             </Link>
             <div className="ra">
               {r.tenhou_json != null && <button onClick={async () => flash((await copyText(tenhouUrl(r.tenhou_json))) ? `${r.label}のURLをコピーしました` : 'コピーできませんでした')}>URL</button>}
@@ -177,5 +195,74 @@ function GameCard({ game, index, rounds, onChanged, flash }: {
         </div>
       )}
     </section>
+  );
+}
+
+function EditSession({ session, gameIds, onSaved }: { session: StudySession; gameIds: string[]; onSaved: () => void }) {
+  const nav = useNavigate();
+  const { confirm, isArmed } = useConfirm();
+  const [heldOn, setHeldOn] = useState(session.held_on);
+  const [title, setTitle] = useState(session.title);
+  const [people, setPeople] = useState(session.participants.join('、'));
+  const [note, setNote] = useState(session.note);
+  const [err, setErr] = useState('');
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const participants = people.split(/[、,\s]+/).map((x) => x.trim()).filter(Boolean);
+    const { error } = await supabase.from('study_sessions').update({ held_on: heldOn, title: title.trim(), participants, note }).eq('id', session.id);
+    if (error) return setErr(errorText(error));
+    onSaved();
+  }
+  async function remove() {
+    if (!confirm('del')) return;
+    // 半荘を消すと局は宙に浮くので、局→半荘→勉強会の順に消す
+    if (gameIds.length) {
+      const r = await supabase.from('study_rounds').delete().in('game_id', gameIds);
+      if (r.error) return setErr(errorText(r.error));
+      const g = await supabase.from('study_games').delete().in('id', gameIds);
+      if (g.error) return setErr(errorText(g.error));
+    }
+    const { error } = await supabase.from('study_sessions').delete().eq('id', session.id);
+    if (error) return setErr(errorText(error));
+    nav('/');
+  }
+  return (
+    <form className="card stack" onSubmit={submit}>
+      <label>開催日<input type="date" required value={heldOn} onChange={(e) => setHeldOn(e.target.value)} /></label>
+      <label>テーマ<input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+      <label>参加者（「、」かスペースで区切る）<input value={people} onChange={(e) => setPeople(e.target.value)} /></label>
+      <label>メモ<textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></label>
+      <div className="row between">
+        <button className="primary">保存</button>
+        <button type="button" className="danger" onClick={remove}>{isArmed('del') ? '半荘・局ごと本当に削除' : 'この勉強会を削除'}</button>
+      </div>
+      {err && <p className="bad">{err}</p>}
+    </form>
+  );
+}
+
+function EditGame({ game, onSaved }: { game: Game; onSaved: () => void }) {
+  const [name, setName] = useState(game.name);
+  const [players, setPlayers] = useState<string[]>(() => [0, 1, 2, 3].map((i) => game.player_names[i] ?? ''));
+  const [err, setErr] = useState('');
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const player_names = players.map((p, i) => p.trim() || ['東家', '南家', '西家', '北家'][i]);
+    const { error } = await supabase.from('study_games').update({ name: name.trim(), player_names }).eq('id', game.id);
+    if (error) return setErr(errorText(error));
+    onSaved();
+  }
+  return (
+    <form className="stack" onSubmit={submit}>
+      <label>半荘の名前<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+      <div className="grid4">
+        {['起家（東）', '南家', '西家', '北家'].map((lab, i) => (
+          <label key={i}>{lab}<input value={players[i]} onChange={(e) => setPlayers((p) => p.map((x, j) => (j === i ? e.target.value : x)))} /></label>
+        ))}
+      </div>
+      <p className="quiet small">名前の変更は、これから作る局に使われます。入力済みの局の名前は、その局の「局の設定」で変えてください。</p>
+      <button className="primary">保存</button>
+      {err && <p className="bad">{err}</p>}
+    </form>
   );
 }

@@ -12,7 +12,7 @@ def filt(rows, params):
         if k in ('select', 'order', 'limit', 'columns'): continue
         op, _, val = v.partition('.')
         if op == 'eq': rows = [r for r in rows if str(r.get(k)) == val]
-        elif op == 'in': vals = val.strip('()').split(','); rows = [r for r in rows if str(r.get(k)) in vals]
+        elif op == 'in': vals = [x.strip('"') for x in val.strip('()').split(',')]; rows = [r for r in rows if str(r.get(k)) in vals]
     if 'order' in params:
         for part in reversed(params['order'].split(',')):
             col, *rest = part.split('.')

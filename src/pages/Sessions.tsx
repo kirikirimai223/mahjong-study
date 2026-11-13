@@ -16,12 +16,35 @@ export function Sessions() {
   const [rows, setRows] = useState<StudySession[] | null>(null);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [counts, setCounts] = useState<Record<string, { games: number; rounds: number }>>({});
 
   async function load() {
     const { data, error } = await supabase.from('study_sessions').select('*').order('held_on', { ascending: false }).order('created_at', { ascending: false });
     if (error) return setErr(errorText(error));
     setRows(data as StudySession[]);
+    // 半荘数・局数（勉強会グループは小さいので、まとめて取って数える）
+    const g = await supabase.from('study_games').select('id, session_id');
+    const r = await supabase.from('study_rounds').select('id, game_id');
+    if (g.error || r.error) return;
+    const c: Record<string, { games: number; rounds: number }> = {};
+    const gameSession = new Map<string, string>();
+    for (const x of g.data as { id: string; session_id: string | null }[]) {
+      if (!x.session_id) continue;
+      gameSession.set(x.id, x.session_id);
+      (c[x.session_id] ??= { games: 0, rounds: 0 }).games++;
+    }
+    for (const x of r.data as { game_id: string | null }[]) {
+      const sid = x.game_id ? gameSession.get(x.game_id) : undefined;
+      if (sid) c[sid].rounds++;
+    }
+    setCounts(c);
   }
+  const shown = rows?.filter((s) => {
+    const t = q.trim();
+    if (!t) return true;
+    return t.split(/\s+/).every((w) => [s.title, s.note, s.held_on, fmtDate(s.held_on), ...s.participants].some((f) => f.includes(w)));
+  });
   useEffect(() => { load(); }, []);
 
   return (
@@ -34,13 +57,16 @@ export function Sessions() {
       {err && <p className="bad">{err}</p>}
       {rows === null && !err && <p className="quiet">読み込み中…</p>}
       {rows?.length === 0 && <p className="quiet">まだ勉強会がありません。「新しい勉強会」から作ってください。</p>}
+      {(rows?.length ?? 0) > 0 && <input className="search" type="search" value={q} placeholder="テーマ・参加者・メモ・日付で絞り込む" onChange={(e) => setQ(e.target.value)} />}
+      {q && shown?.length === 0 && <p className="quiet">当てはまる勉強会はありません。</p>}
       <ul className="list">
-        {rows?.map((s) => (
+        {shown?.map((s) => (
           <li key={s.id}>
             <Link to={`/sessions/${s.id}`} className="card link-card">
               <b>{fmtDate(s.held_on)}</b>
               <span>{s.title || '（テーマなし）'}</span>
               {s.participants.length > 0 && <small className="quiet">{s.participants.join('・')}</small>}
+              <small className="quiet">{counts[s.id] ? `半荘${counts[s.id].games}・${counts[s.id].rounds}局` : '半荘なし'}</small>
             </Link>
           </li>
         ))}

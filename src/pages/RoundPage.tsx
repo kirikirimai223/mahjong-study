@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { mountEditor, type EditorApi, type EditorData } from '../editor/main';
 import { errorText, supabase } from '../lib/supabase';
-import { createRound, roundLabelOf, type RoundRow } from '../lib/data';
+import { copyText, createRound, roundLabelOf, tenhouUrl, type RoundRow } from '../lib/data';
+import { Reviews } from './Reviews';
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 const AUTOSAVE_MS = 2500;
@@ -19,6 +20,7 @@ export function RoundPage() {
   const [save, setSave] = useState<SaveState>('saved');
   const [busy, setBusy] = useState(false);
   const [liveLabel, setLiveLabel] = useState('');
+  const [showReviews, setShowReviews] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const writing = useRef<Promise<void> | null>(null);
 
@@ -98,6 +100,15 @@ export function RoundPage() {
     setBusy(false);
   }
 
+  /** 天鳳形式に組んで保存し、そのURLをコピー。組めなければ理由を返す */
+  async function copyNagaUrl(): Promise<string | null> {
+    try {
+      const built = await persist(true);
+      if (!built || !('json' in built) || !built.json) return `まだ天鳳形式に組めません（${(built as { error?: string } | null)?.error ?? '未入力'}）`;
+      return (await copyText(tenhouUrl(built.json))) ? null : 'コピーできませんでした';
+    } catch (e) { return `保存できませんでした：${errorText(e)}`; }
+  }
+
   async function goNext() {
     const ed = api.current;
     if (!ed || !round?.game_id) return;
@@ -122,10 +133,12 @@ export function RoundPage() {
       <div className="roundbar">
         <Link to={back} onClick={(e) => { if (save !== 'saved') { e.preventDefault(); persist(false).then(() => nav(back), () => nav(back)); } }}>← 戻る</Link>
         <span className={`status ${save}`}>{label}・{status}</span>
+        <button onClick={() => setShowReviews((v) => !v)} className={showReviews ? 'on' : ''} disabled={!round}>解析</button>
         <button onClick={saveNow} disabled={busy || !round}>保存</button>
         <button className="primary" onClick={goNext} disabled={busy || !round?.game_id}>次の局へ</button>
       </div>
       {err && <main><p className="bad">{err}</p></main>}
+      {showReviews && round && <div className="round-extra"><Reviews roundId={round.id} copyUrl={copyNagaUrl} /></div>}
       <div ref={host} />
     </div>
   );
