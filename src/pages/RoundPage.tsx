@@ -133,6 +133,7 @@ export function RoundPage() {
       <div className="roundbar">
         <Link to={back} onClick={(e) => { if (save !== 'saved') { e.preventDefault(); persist(false).then(() => nav(back), () => nav(back)); } }}>← 戻る</Link>
         <span className={`status ${save}`}>{label}・{status}</span>
+        <Link to={`/rounds/${id}/review`} className="btnlink" onClick={(e) => { if (save !== 'saved') { e.preventDefault(); persist(false).then(() => nav(`/rounds/${id}/review`), () => nav(`/rounds/${id}/review`)); } }}>振り返り</Link>
         <button onClick={() => setShowReviews((v) => !v)} className={showReviews ? 'on' : ''} disabled={!round}>解析</button>
         <button onClick={saveNow} disabled={busy || !round}>保存</button>
         <button className="primary" onClick={goNext} disabled={busy || !round?.game_id}>次の局へ</button>

@@ -6,7 +6,12 @@ ME = '11111111-1111-1111-1111-111111111111'
 db = {k: [] for k in ['study_members','study_invites','study_sessions','study_games','study_rounds','study_positions','study_comments','study_ai_reviews']}
 db['study_members'].append({'id': ME, 'display_name': 'いいだ', 'is_admin': True, 'created_at': '2026-11-13T00:00:00Z'})
 calls = []
-def now(): return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime()) + str(time.time_ns())[-6:]
+_seq = [0]
+def now():
+    # 並び順が安定するよう、1ミリ秒ずつずらした正しい ISO 時刻を返す
+    _seq[0] += 1
+    t = time.time() + _seq[0] / 1000
+    return time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(t)) + '.%03dZ' % int((t % 1) * 1000)
 def filt(rows, params):
     for k, v in params.items():
         if k in ('select', 'order', 'limit', 'columns'): continue
@@ -42,10 +47,15 @@ async def handle(route):
     if req.method == 'POST':
         body = json.loads(req.post_data); body = body if isinstance(body, list) else [body]
         out = []
+        keys = params.get('on_conflict', '').split(',') if params.get('on_conflict') else []
         for r in body:
+            hit = next((x for x in t if keys and all(str(x.get(k)) == str(r.get(k)) for k in keys)), None)
+            if hit: hit.update(r); hit['updated_at'] = now(); out.append(hit); continue
             r = {'id': str(uuid.uuid4()), 'created_at': now(), 'updated_at': now(), **r}
             if m.group(1) == 'study_rounds': r.setdefault('tenhou_json', None); r.setdefault('randomized_seats', [])
             if m.group(1) == 'study_sessions': r.setdefault('participants', []); r.setdefault('note', '')
+            if m.group(1) == 'study_comments': r.setdefault('author_id', ME); r.setdefault('tags', []); r.setdefault('speaker', '')
+            if m.group(1) == 'study_positions': r.setdefault('conclusion', ''); r.setdefault('conclusion_by', None)
             t.append(r); out.append(r)
         return await reply(pick(out, params.get('select')), 201)
     if req.method == 'PATCH':

@@ -19,6 +19,7 @@ export function SessionDetail() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [reviewed, setReviewed] = useState<Set<string>>(new Set());
+  const [talked, setTalked] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     const ses = await supabase.from('study_sessions').select('*').eq('id', id!).maybeSingle();
@@ -35,8 +36,16 @@ export function SessionDetail() {
     setRounds(r.data as RoundListRow[]);
     const rids = (r.data as RoundListRow[]).map((x) => x.id);
     if (!rids.length) return setReviewed(new Set());
-    const rv = await supabase.from('study_ai_reviews').select('round_id').in('round_id', rids);
+    const [rv, cm] = await Promise.all([
+      supabase.from('study_ai_reviews').select('round_id').in('round_id', rids),
+      supabase.from('study_comments').select('round_id').in('round_id', rids),
+    ]);
     if (!rv.error) setReviewed(new Set((rv.data as { round_id: string }[]).map((x) => x.round_id)));
+    if (!cm.error) {
+      const t: Record<string, number> = {};
+      for (const x of cm.data as { round_id: string }[]) t[x.round_id] = (t[x.round_id] ?? 0) + 1;
+      setTalked(t);
+    }
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
@@ -60,7 +69,7 @@ export function SessionDetail() {
             </>}
           {games.length === 0 && <p className="quiet">まだ半荘がありません。「新しい半荘」から始めてください。</p>}
           {games.map((g, i) => (
-            <GameCard key={g.id} game={g} index={i} rounds={rounds.filter((r) => r.game_id === g.id).sort(roundOrder)} reviewed={reviewed} onChanged={load} flash={flash} />
+            <GameCard key={g.id} game={g} index={i} rounds={rounds.filter((r) => r.game_id === g.id).sort(roundOrder)} reviewed={reviewed} talked={talked} onChanged={load} flash={flash} />
           ))}
           {adding
             ? <NewGame session={s} count={games.length} onCancel={() => setAdding(false)} />
@@ -123,8 +132,8 @@ function NewGame({ session, count, onCancel }: { session: StudySession; count: n
   );
 }
 
-function GameCard({ game, index, rounds, reviewed, onChanged, flash }: {
-  game: Game; index: number; rounds: RoundListRow[]; reviewed: Set<string>; onChanged: () => void; flash: (m: string) => void;
+function GameCard({ game, index, rounds, reviewed, talked, onChanged, flash }: {
+  game: Game; index: number; rounds: RoundListRow[]; reviewed: Set<string>; talked: Record<string, number>; onChanged: () => void; flash: (m: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const nav = useNavigate();
@@ -169,9 +178,10 @@ function GameCard({ game, index, rounds, reviewed, onChanged, flash }: {
           <li key={r.id}>
             <Link to={`/rounds/${r.id}`} className="rt">
               <b>{r.label}</b>
-              <small>{r.summary}{r.tenhou_json ? (r.randomized_seats.length ? '・一部ランダムで補完' : '') : '・未出力'}{reviewed.has(r.id) ? '・解析あり' : ''}</small>
+              <small>{r.summary}{r.tenhou_json ? (r.randomized_seats.length ? '・一部ランダムで補完' : '') : '・未出力'}{reviewed.has(r.id) ? '・解析あり' : ''}{talked[r.id] ? `・コメント${talked[r.id]}` : ''}</small>
             </Link>
             <div className="ra">
+              {r.tenhou_json != null && <Link to={`/rounds/${r.id}/review`} className="btnlink">振り返り</Link>}
               {r.tenhou_json != null && <button onClick={async () => flash((await copyText(tenhouUrl(r.tenhou_json))) ? `${r.label}のURLをコピーしました` : 'コピーできませんでした')}>URL</button>}
               <button className="danger" onClick={() => delRound(r)}>{isArmed(`r:${r.id}`) ? '本当に削除' : '削除'}</button>
             </div>

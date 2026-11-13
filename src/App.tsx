@@ -6,6 +6,7 @@ import { Sessions } from './pages/Sessions';
 import { SessionDetail } from './pages/SessionDetail';
 import { Members } from './pages/Members';
 import { RoundPage } from './pages/RoundPage';
+import { ReviewPage } from './pages/ReviewPage';
 
 function Shell() {
   const { state, refresh } = useAuth();
@@ -28,6 +29,7 @@ function Shell() {
         <Route path="/sessions/:id" element={<SessionDetail />} />
         <Route path="/members" element={<Members />} />
         <Route path="/rounds/:id" element={<RoundPage />} />
+        <Route path="/rounds/:id/review" element={<ReviewPage />} />
         <Route path="*" element={<main><p>ページが見つかりません。<Link to="/">一覧へ</Link></p></main>} />
       </Routes>
     </>
