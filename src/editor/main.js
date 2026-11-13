@@ -283,11 +283,51 @@ function expectsDraw(seat) {
 }
 
 /** 河の牌を消す。後ろの牌を鳴いた副露の位置も詰める */
+/**
+ * 河の牌を消す。鳴かれた牌なら、その鳴き（副露と、鳴いた家が続けて切った牌）も一緒に取り消す。
+ * 後ろの牌を指している副露・槓の位置もずらし、消した牌を指していた画面の状態も外す。
+ */
 function deleteRiver(st, seat, idx) {
+  const r = st.seats[seat].river[idx];
+  if (!r) return;
+  if (r.calledBy !== undefined) {
+    const by = r.calledBy;
+    const mi = st.seats[by].melds.findIndex((m) => m.from === seat && m.riverIndex === idx && m.kind !== 'ankan' && m.kind !== 'kakan');
+    if (mi >= 0) removeCall(st, by, mi);
+  }
   st.seats[seat].river.splice(idx, 1);
-  for (const b of st.seats) b.melds = b.melds.filter((m) => !(m.from === seat && m.riverIndex === idx))
-    .map((m) => (m.from === seat && m.riverIndex > idx ? { ...m, riverIndex: m.riverIndex - 1 } : m));
-  st.ui.selected = null;
+  for (const b of st.seats) {
+    b.melds = b.melds.map((m) => (m.from === seat && m.riverIndex > idx ? { ...m, riverIndex: m.riverIndex - 1 } : m));
+  }
+  // 自分の槓は「自分の何打目の後か」で持っているので、それより前の牌を消したら1つ前にずらす
+  st.seats[seat].melds = st.seats[seat].melds.map((m) => (m.afterOwnDiscard !== undefined && m.afterOwnDiscard > idx ? { ...m, afterOwnDiscard: m.afterOwnDiscard - 1 } : m));
+  clearStaleUi(st);
+}
+
+/** 河や副露の位置を指したままの画面の状態（鳴きの候補・選択中の牌など）を外す */
+function clearStaleUi(st) {
+  Object.assign(st.ui, { selected: null, selectedMeld: null, callWindow: null, meldPending: null, meldTarget: null, pick: null, pendingOwn: [], riverInsert: null });
+}
+
+/** 鳴きの直後に鳴いた家が切った牌の、河の位置（チー・ポンは鳴いた直後、明槓は嶺上牌の後）。分からなければ -1 */
+function callFollowUp(st, by, meld) {
+  let steps;
+  try { steps = replayTurns(buildBoard(), false); } catch { return -1; }
+  const i = steps.findIndex((x) => x.kind === 'call' && x.meld === meld);
+  if (i < 0) return -1;
+  const d = steps.slice(i + 1).find((x) => x.kind === 'discard');
+  return d && d.seat === by ? d.river : -1;
+}
+
+/**
+ * チー・ポン・明槓を取り消す。配牌から入力している家は「鳴いて切る」を一度に入れているので、
+ * 鳴いた直後に切った牌も河から外す（外さないと、ツモなしの打牌が残って手牌に「?」が出る）。
+ */
+function removeCall(st, by, mi) {
+  const m = st.seats[by].melds[mi];
+  const follow = (st.seats[by].haipai ?? []).length === 13 ? callFollowUp(st, by, m) : -1;
+  removeMeld(st, by, mi);
+  if (follow >= 0) deleteRiver(st, by, follow);
 }
 /** 副露を消す（そのポンを元にした加槓も消し、相手の河の「鳴かれた」印も外す） */
 function removeMeld(st, seat, idx) {
@@ -1081,7 +1121,8 @@ root.addEventListener('click', (ev) => {
       const sel = st.ui.selected; const r = st.seats[sel.seat].river[sel.idx];
       const by = r.calledBy;
       const i = st.seats[by].melds.findIndex((m) => m.from === sel.seat && m.riverIndex === sel.idx);
-      if (i >= 0) removeMeld(st, by, i); else delete r.calledBy;
+      if (i >= 0) removeCall(st, by, i); else delete r.calledBy;
+      clearStaleUi(st);
     });
     case 'hand': {
       ev.stopPropagation();
@@ -1100,7 +1141,12 @@ root.addEventListener('click', (ev) => {
       return render();
     }
     case 'meld': ev.stopPropagation(); return focus(seat, 'meld', { selectedMeld: { seat, idx } });
-    case 'delmeld': return commit((st) => { const sm = st.ui.selectedMeld; removeMeld(st, sm.seat, sm.idx); st.ui.selectedMeld = null; });
+    case 'delmeld': return commit((st) => {
+      const sm = st.ui.selectedMeld;
+      const m = st.seats[sm.seat].melds[sm.idx];
+      if (m && m.from !== undefined && m.kind !== 'kakan') removeCall(st, sm.seat, sm.idx); else removeMeld(st, sm.seat, sm.idx);
+      clearStaleUi(st);
+    });
     case 'kakan': return commit((st) => {
       const sm = st.ui.selectedMeld; const b = st.seats[sm.seat]; const pon = b.melds[sm.idx];
       const k = kindOf(pon.called);

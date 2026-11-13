@@ -1,4 +1,6 @@
-import asyncio, json, sys
+import asyncio, json, os, sys
+# UNDO_CALLS=1 のときは、鳴いて切るたびに「この副露を取り消す」で取り消し、取り消した状態を確かめてから鳴き直す
+UNDO = os.environ.get('UNDO_CALLS') == '1'
 from playwright.async_api import async_playwright
 KEY = 'paifu-editor'
 data = json.load(open('e2e/acts.json'))
@@ -18,7 +20,9 @@ async def play(pg, name):
     prev_cut = None
     meld_cut = False
     acts = d['acts']; res = d['result']
-    for i, a in enumerate(acts):
+    undone = set(); i = -1; undo_log = []
+    while i + 1 < len(acts):
+        i += 1; a = acts[i]
         s = await st()
         if a['type'] in ('draw', 'cut', 'kan') and s['ui']['seat'] != a['seat']:
             manual_switch += 1
@@ -36,6 +40,24 @@ async def play(pg, name):
             await pg.dispatch_event(sel, 'click')
             s3 = await st()
             prev_cut = {'seat': a['seat'], 'idx': len(s3['seats'][a['seat']]['river']) - 1}
+            if UNDO and i not in undone:
+                undone.add(i)
+                call = acts[i - 1]; caller = call['seat']
+                src = next((sj, j) for sj in range(4) for j, r in enumerate(s3['seats'][sj]['river']) if r.get('calledBy') == caller and any(m.get('from') == sj and m.get('riverIndex') == j for m in s3['seats'][caller]['melds']) and j == max(jj for jj, rr in enumerate(s3['seats'][sj]['river']) if rr.get('calledBy') == caller))
+                before = [len(x['river']) for x in s3['seats']]; melds_before = len(s3['seats'][caller]['melds'])
+                await pg.dispatch_event(f'[data-act=river][data-seat="{src[0]}"][data-idx="{src[1]}"]', 'click')
+                await pg.click('[data-act=unmeld]')
+                s4 = await st()
+                after = [len(x['river']) for x in s4['seats']]
+                ok = (len(s4['seats'][caller]['melds']) == melds_before - 1 and after[caller] == before[caller] - 1
+                      and 'calledBy' not in s4['seats'][src[0]]['river'][src[1]] and not s4['ui'].get('callWindow'))
+                undo_log.append({'act': i - 1, 'kind': call['kind'], 'ok': ok})
+                if not ok: return {'error': f'undo failed at {i}', 'before': before, 'after': after, 'melds': s4['seats'][caller]['melds']}
+                # 取り消した直後の牌（鳴かれていた牌）をもう一度鳴けるように、その牌を最後の打牌として扱い、鳴き直す
+                prev_cut = {'seat': src[0], 'idx': src[1]}
+                await pg.click(f'[data-act=pickseat][data-v="{caller}"]')
+                i -= 2  # 次のループで鳴き（acts[i-1]）からやり直す
+                continue
         elif a['type'] == 'cut':
             if a['riichi']:
                 await pg.click('[data-act=riichinext]')
@@ -118,7 +140,7 @@ async def play(pg, name):
     await pg.click('[data-act=build]')
     url = await pg.eval_on_selector('textarea.url', 'e => e.value') if await pg.query_selector('textarea.url') else None
     out = await pg.eval_on_selector('#output', 'e => e.textContent.trim()') if url is None else None
-    return {'manual_seat_switches': manual_switch, 'issues': issues, 'url': url, 'out': out}
+    return {'manual_seat_switches': manual_switch, 'issues': issues, 'url': url, 'out': out, 'undo': undo_log}
 
 async def main():
     async with async_playwright() as p:
