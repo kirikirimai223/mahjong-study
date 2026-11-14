@@ -496,9 +496,24 @@ function issuesFor(seat, area) {
   return currentIssues.filter((i) => i.seat === seat && (!area || i.area === area));
 }
 
+/** 鳴いた直後に切った牌（チー・ポンのあとの手出し）の河の位置。家ごとの Set */
+function afterCallDiscards() {
+  const out = [new Set(), new Set(), new Set(), new Set()];
+  let steps;
+  try { steps = replayTurns(buildBoard(), false); } catch { return out; }
+  const called = [false, false, false, false];
+  for (const x of steps) {
+    if (x.kind === 'call') called[x.seat] = x.meld.kind !== 'daiminkan';
+    else if (x.kind === 'draw') called[x.seat] = false;
+    else if (x.kind === 'discard') { if (called[x.seat]) out[x.seat].add(x.river); called[x.seat] = false; }
+  }
+  return out;
+}
+let afterCallCache = null;
 function riverRows(s) {
   const b = state.seats[s];
   const sel = state.ui.selected;
+  const afterCall = (afterCallCache ??= afterCallDiscards())[s];
   const bad = new Map(issuesFor(s, 'river').map((i) => [i.index, i.message]));
   const cells = b.river.map((r, i) => {
     const cls = [
@@ -506,6 +521,7 @@ function riverRows(s) {
       r.draw !== undefined ? 'hasdraw' : '',
       r.riichi ? 'yoko' : '',
       r.calledBy !== undefined ? 'called' : '',
+      afterCall.has(i) ? 'aftercall' : '',
       sel && sel.seat === s && sel.idx === i ? 'sel' : '',
       bad.has(i) ? 'bad' : '',
       state.ui.meldTarget && state.ui.meldTarget.from === s && state.ui.meldTarget.idx === i ? 'target' : '',
@@ -707,6 +723,7 @@ function handRow(s) {
     ? `<span class="gap"></span>${tileHTML(state.ui.pendingDraw.tile, `drawn ${cutting ? 'cuttable' : ''} ${pick.includes('d') ? 'picked' : ''}`, cutting ? `data-act="${meldPick(s) ? 'mpick' : 'cut'}" data-seat="${s}" data-t="${state.ui.pendingDraw.tile}" data-drawn="1" data-key="d"` : '')}`
     : cutting && cutMode(s) && expectsDraw(s) ? '<span class="gap"></span><span class="tile ghost small"><span class="face">ツモ</span></span>' : '';
   if (pdTile) return `${hand}${empty}${pdTile}<span class="gap"></span>${melds}`;
+  if (shown.kind === 'haipai' && b.melds.length) return `${hand}${empty}<span class="gap"></span><small class="meldnote">局の開始時の手牌（副露は表示しません）</small>`;
   if (shown.tiles.length === 0 && !empty && b.melds.length === 0) return `<span class="placeholder wide">${b.hand.length === 0 && (b.haipai ?? []).length === 0 ? '手牌' : ''}</span>`;
   return `${hand}${empty}<span class="gap"></span>${melds}`;
 }
@@ -751,7 +768,7 @@ function issuesHTML() {
   const list = open ? errors : errors.slice(0, 2);
   return `<div class="issues">
     <div class="ih"><b>要確認 ${errors.length}件</b>${errors.length > 2 ? `<button data-act="toggleissues">${open ? '閉じる' : 'すべて表示'}</button>` : ''}</div>
-    ${list.map((i) => `<div class="issue-row"><button class="issue" data-act="goissue" data-v="${currentIssues.indexOf(i)}">${i.message}</button>${i.fix ? `<button class="fixbtn" data-act="fix" data-v="${currentIssues.indexOf(i)}">${i.fix.label}</button>` : ''}</div>`).join('')}
+    ${list.map((i) => `<div class="issue-row"><button class="issue" data-act="goissue" data-v="${currentIssues.indexOf(i)}">${i.message}</button>${i.fix ? `<button class="fixbtn" data-act="fix" data-v="${currentIssues.indexOf(i)}">${i.fix.label}</button>` : ''}${(i.fixes ?? []).map((f, k) => `<button class="fixbtn" data-act="fix2" data-v="${currentIssues.indexOf(i)}" data-k="${k}">${f.label}</button>`).join('')}</div>`).join('')}
     ${warnHTML}
   </div>`;
 }
@@ -795,7 +812,7 @@ function contextHTML() {
         <button data-act="autoadv" class="${state.ui.autoAdvance ? 'on' : ''}">手番どおりに進める</button>
         ${cutMode(seat) ? '<button data-act="mode" data-v="meld" class="primary">副露</button>' : ''}
         ${cutMode(seat) ? (pending
-          ? `ツモ ${tileHTML(pending, 'mini')} → <b>手牌から切る牌をタップ</b>（ツモった牌ならツモ切り）
+          ? `ツモ ${tileHTML(pending, 'mini')} → <button data-act="tsumokiri" class="primary big">ツモ切り</button> か、<b>手牌から切る牌をタップ</b>
              <button data-act="riichinext" class="${state.ui.riichiNext ? 'on' : ''}">立直して切る</button>
              <button data-act="tsumoagari">このツモで和了</button><button data-act="canceldraw">取消</button>`
           : expectsDraw(seat) ? '<small>パレットでツモ牌を選び、手牌から切る牌をタップ</small>'
@@ -897,6 +914,7 @@ function outputHTML() {
 }
 
 function render() {
+  afterCallCache = null;
   uiOptions = [];
   const MODES = [['river', '河'], ['meld', '副露'], ['hand', '手牌'], ['dora', 'ドラ'], ['ura', '裏ドラ'], ['result', '結果']];
   const mode = state.ui.mode === 'win' ? 'result' : state.ui.mode;
@@ -947,9 +965,21 @@ root.addEventListener('click', (ev) => {
   switch (a) {
     case 'pal': return tapPalette(Number(el.dataset.t));
     case 'pickseat': return focus(Number(v), state.ui.mode === 'result' || state.ui.mode === 'win' || state.ui.mode === 'dora' || state.ui.mode === 'ura' ? 'river' : state.ui.mode);
+    case 'tsumokiri': {
+      // ツモ牌をそのまま切る（ツモ牌の小さな牌を狙ってタップしなくてよいように）
+      const pd = state.ui.pendingDraw;
+      const drawnEl = pd && root.querySelector(`[data-act="cut"][data-seat="${pd.seat}"][data-drawn="1"]`);
+      if (!drawnEl) return flash('先にパレットでツモ牌を選んでください');
+      drawnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+      return;
+    }
     case 'zone': {
       // 河・手牌の何もない所をタップ：その家に視点を移して、その場所の編集に入る
       const zone = el.dataset.zone;
+      // ツモ牌を選んで切る牌を待っている家の手牌の隙間：手牌の編集に切り替えない（ツモ切りの押し損ねで開かないように）
+      if (zone === 'hand' && state.ui.pendingDraw && state.ui.pendingDraw.seat === seat && cutMode(seat)) {
+        return flash('ツモ切りは「ツモ切り」ボタンか、右端のツモ牌をタップしてください');
+      }
       const mode = zone === 'hand' ? (state.ui.seat === seat && state.ui.mode === 'meld' ? 'meld' : 'hand') : 'river';
       if (state.ui.seat === seat && state.ui.mode === mode) return;
       return focus(seat, mode);
@@ -1160,6 +1190,21 @@ root.addEventListener('click', (ev) => {
     case 'fix': {
       const is = currentIssues[Number(v)];
       if (is?.fix?.kind === 'tsumogiri') return commit((st) => { st.seats[is.fix.seat].river[is.fix.index].tsumogiri = true; });
+      return;
+    }
+    case 'fix2': {
+      const f = currentIssues[Number(v)]?.fixes?.[Number(el.dataset.k)];
+      if (!f) return;
+      if (f.kind === 'dropturn') return commit((st) => { deleteRiver(st, f.seat, f.index); }, `${state.names[f.seat]}の${f.index + 1}打目（ツモと打牌）を消しました`);
+      if (f.kind === 'dropdraw') {
+        const r = state.seats[f.seat].river[f.index];
+        const d = r.draw;
+        return commit((st) => {
+          const x = st.seats[f.seat].river[f.index];
+          delete x.draw;
+          x.tsumogiri = false; // 鳴いた後の打牌は手出し
+        }, d !== r.tile ? `ツモ（${tileName(d)}）を外しました。その牌を別の手番でツモっていたら、手牌の「?」をタップして入れてください` : 'ツモを外しました');
+      }
       return;
     }
     case 'unmeld': return commit((st) => {

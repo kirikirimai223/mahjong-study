@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseTenhou } from '../src/core/tenhou';
 import { logToBoard } from '../src/core/board';
-import { diagnose, seatCounts } from '../src/core/diagnose';
+import { diagnose, expectedRiverCounts, seatCounts } from '../src/core/diagnose';
+import { replayTurns } from '../src/core/board';
 import { SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL } from './fixtures';
 
 const load = (u: string) => { const l = parseTenhou(u); return { board: logToBoard(l), names: l.meta.names }; };
@@ -64,10 +65,35 @@ describe('入力ミスを家と位置つきで返す', () => {
     for (const b of board.seats) for (const m of b.melds) {
       if (m.kind !== 'ankan' && m.kind !== 'kakan' && m.from === 1 && m.riverIndex > 3) m.riverIndex--;
     }
-    const issues = diagnose(board, names);
+    const all = diagnose(board, names);
+    const issues = all.filter((i) => i.level !== 'warn');
     expect(issues.length).toBeGreaterThan(0);
     expect(issues.every((i) => i.area === 'river')).toBe(true);
     expect(issues.some((i) => i.seat === 1)).toBe(true);
+    // 鳴きの位置から数えた河の枚数も添える（私が1枚少ない）
+    const hint = all.find((i) => i.message.startsWith('参考：'));
+    expect(hint?.message).toContain('私は1枚少ない');
+  });
+
+  it('鳴きの位置から数えた河の枚数：元の牌譜ではいまの枚数と一致する', () => {
+    for (const u of [SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL]) {
+      const { board } = load(u);
+      expect(expectedRiverCounts(board)).toEqual(board.seats.map((b) => b.river.length));
+    }
+  });
+
+  it('鳴いた直後の打牌にツモが入っているとき：「この手番を消す」「ツモだけ外す」を出す', () => {
+    const { board, names } = load(SAMPLE_URL);
+    // チーした家の、鳴いた直後の打牌にツモを入れてしまう
+    const caller = board.seats.findIndex((b) => b.melds.some((m) => m.kind === 'chi'));
+    const m = board.seats[caller].melds.find((x) => x.kind === 'chi')!;
+    const callerRiver = board.seats[caller].river;
+    const idx = expectedAfter(board, caller, m);
+    callerRiver[idx].draw = 19;
+    const is = diagnose(board, names).find((i) => i.message.includes('鳴いた直後なのでツモはない'));
+    // 後ろにまだ打牌があれば「この手番を消す」も出す（消すと、後ろの打牌が鳴いた後の打牌になる）
+    expect(is?.fixes?.map((f) => f.kind)).toEqual(idx + 1 < callerRiver.length ? ['dropturn', 'dropdraw'] : ['dropdraw']);
+    expect(is).toMatchObject({ seat: caller, index: idx });
   });
 
   it('席ごとの枚数：副露1つで手牌の目安が3枚減る', () => {
@@ -258,3 +284,11 @@ describe('ツモ牌の抜け（手牌に「?」が出る原因）', () => {
     expect(diagnose(board, names).filter((x) => x.level !== 'warn')).toEqual([]);
   });
 });
+
+/** 鳴いた直後に切った牌の河の位置 */
+function expectedAfter(board: Parameters<typeof replayTurns>[0], seat: number, meld: unknown) {
+  const steps = replayTurns(board, false);
+  const i = steps.findIndex((x) => x.kind === 'call' && x.meld === meld);
+  const d = steps.slice(i + 1).find((x) => x.kind === 'discard' && x.seat === seat);
+  return d && d.kind === 'discard' ? d.river : -1;
+}

@@ -12,6 +12,8 @@ export interface Issue {
   level?: 'warn';
   /** ワンタップで直せる場合の直し方 */
   fix?: { kind: 'tsumogiri'; seat: Seat; index: number; label: string };
+  /** 直し方が複数あるとき（ボタンを並べる） */
+  fixes?: { kind: 'dropturn' | 'dropdraw'; seat: Seat; index: number; label: string }[];
   /** river のとき：問題の牌の位置。河の長さと同じ値なら「ここに牌が足りない」 */
   index?: number;
   message: string;
@@ -150,7 +152,8 @@ export function diagnose(board: BoardSnapshot, names: readonly string[], opts: D
         issues.push(issue);
       }
     });
-    issues.push(...missingDraws(board, steps, nm));
+    // 手番がずれているときのツモの抜けは、ずれの結果なので出さない（直す場所を見失わないように）
+    if (!issues.some((i) => i.level !== 'warn' && i.area === 'river')) issues.push(...missingDraws(board, steps, nm));
   }
 
   // 6. 結果
@@ -199,7 +202,16 @@ function turnIssues(board: BoardSnapshot, nm: (s: Seat) => string, resultEntered
     const idx = ri[cur]++;
     const t = b.river[idx];
     if (justCalled && t.draw !== undefined) {
-      issues.push({ seat: cur, area: 'river', index: idx, message: `${nm(cur)}の${idx + 1}打目：鳴いた直後なのでツモはないが、ツモ牌（${tileName(t.draw)}）が入っている` });
+      const more = idx + 1 < b.river.length;
+      issues.push({
+        seat: cur, area: 'river', index: idx,
+        message: `${nm(cur)}の${idx + 1}打目：鳴いた直後なのでツモはないが、ツモ牌（${tileName(t.draw)}）が入っている。`
+          + (more ? '鳴いたのにこの手番（ツモと打牌）を入れてしまったなら「この手番を消す」、この牌が鳴いた後に切った牌なら「ツモだけ外す」' : 'この牌が鳴いた後に切った牌なら「ツモだけ外す」'),
+        fixes: [
+          ...(more ? [{ kind: 'dropturn' as const, seat: cur, index: idx, label: 'この手番を消す' }] : []),
+          { kind: 'dropdraw' as const, seat: cur, index: idx, label: 'ツモだけ外す' },
+        ],
+      });
     } else if (justCalled && t.tsumogiri === true) {
       issues.push({ seat: cur, area: 'river', index: idx, message: `${nm(cur)}の${idx + 1}打目：鳴いた直後なのにツモ切りになっている` });
     }
@@ -220,6 +232,18 @@ function turnIssues(board: BoardSnapshot, nm: (s: Seat) => string, resultEntered
 
   // 入力途中（結果が未入力）：どこで止まっていても、河の残りがあっても矛盾ではない
   if (!resultEntered) return issues;
+  const hint = riverCountHint(board, nm);
+  // 河の枚数がずれているときは、鳴いた直後のツモのエラーもずれの結果のことが多い。
+  // その手番を消すと枚数が合うなら「この手番を消す」だけを残し、合わないなら先に枚数のずれを直してもらう
+  const withHint = (list: Issue[]) => {
+    if (!hint || !list.some((i) => i.level !== 'warn')) return list;
+    return [...list.map((i) => {
+      if (!i.fixes) return i;
+      const drop = i.fixes.find((f) => f.kind === 'dropturn');
+      if (drop && countsMatchWithout(board, drop.seat, drop.index)) return { ...i, fixes: [drop] };
+      return { ...i, fixes: undefined, message: `${i.message.split('。')[0]}（先に河の枚数のずれを直してください）` };
+    }), hint];
+  };
 
   const left = SEATS.filter((s) => ri[s] < board.seats[s].river.length);
   if (left.length > 0) {
@@ -232,7 +256,7 @@ function turnIssues(board: BoardSnapshot, nm: (s: Seat) => string, resultEntered
     for (const s of left) {
       issues.push({ seat: s, area: 'river', index: ri[s], message: `${nm(s)}の河の${ri[s] + 1}打目以降が手番に入らない（${nm(cur)}の河の抜けが原因の可能性）` });
     }
-    return issues;
+    return withHint(issues);
   }
 
   // 終わり方と結果の整合。合わないときは「足りない家」と「多い家」のうち、直す枚数が少ない方を示す
@@ -284,7 +308,7 @@ function turnIssues(board: BoardSnapshot, nm: (s: Seat) => string, resultEntered
       });
     }
   }
-  return issues;
+  return withHint(issues);
 }
 
 /** 山を引き切って終わる流局（途中流局は含めない） */
@@ -334,4 +358,41 @@ function missingDraws(board: BoardSnapshot, steps: ReturnType<typeof replayTurns
     });
   });
   return out;
+}
+
+/**
+ * 鳴きの位置から、各家の河が何枚になるはずかを数える。鳴かれた牌の次は鳴いた家の番になり、
+ * 飛ばされた家の河が1枚少なくなる。入力された打牌の総数だけ手番を進めて、家ごとの枚数を出す。
+ */
+export function expectedRiverCounts(board: BoardSnapshot): number[] {
+  const total = board.seats.reduce((n, b) => n + b.river.length, 0);
+  const cnt = [0, 0, 0, 0];
+  let cur: Seat = dealerOf(board.setup);
+  for (let k = 0; k < total; k++) {
+    const t = board.seats[cur].river[cnt[cur]++];
+    cur = t?.calledBy !== undefined ? t.calledBy : shimochaOf(cur);
+  }
+  return cnt;
+}
+
+function riverCountHint(board: BoardSnapshot, nm: (s: Seat) => string): Issue | null {
+  const want = expectedRiverCounts(board);
+  const have = board.seats.map((b) => b.river.length);
+  if (want.every((n, s) => n === have[s])) return null;
+  const calls = board.seats.flatMap((b) => b.melds).filter((m) => m.kind !== 'ankan' && m.kind !== 'kakan').length;
+  const fmt = (a: number[]) => SEATS.map((s) => `${nm(s)}${a[s]}`).join('・');
+  const diff = SEATS.filter((s) => want[s] !== have[s]).map((s) => `${nm(s)}は${have[s] > want[s] ? `${have[s] - want[s]}枚多い` : `${want[s] - have[s]}枚少ない`}`).join('、');
+  return {
+    area: 'result', level: 'warn',
+    message: `参考：鳴き${calls}回の位置から数えると、河の枚数は ${fmt(want)} になるはず（今は ${fmt(have)}。${diff}）。鳴いた家は鳴かれた牌の次に手番が来て、飛ばされた家の河が1枚少なくなる`,
+  };
+}
+
+/** その打牌を消したら、鳴きの位置から数えた河の枚数といまの枚数が合うか */
+function countsMatchWithout(board: BoardSnapshot, seat: Seat, index: number): boolean {
+  const b2: BoardSnapshot = { ...board, seats: board.seats.map((b, s) => (s !== seat ? b : { ...b, river: b.river.filter((_, i) => i !== index) })) as BoardSnapshot['seats'] };
+  // 消した牌より後ろを指している鳴きの位置も詰める
+  b2.seats = b2.seats.map((b) => ({ ...b, melds: b.melds.map((m) => ('from' in m && m.from === seat && m.riverIndex > index ? { ...m, riverIndex: m.riverIndex - 1 } : m)) })) as BoardSnapshot['seats'];
+  const want = expectedRiverCounts(b2);
+  return want.every((n, s) => n === b2.seats[s].river.length);
 }
