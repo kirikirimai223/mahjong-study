@@ -676,6 +676,21 @@ const pickTiles = (seat, keys) => {
 const sameTiles = (a, b) => JSON.stringify([...a].sort((x, y) => x - y)) === JSON.stringify([...b].sort((x, y) => x - y));
 /** 鳴きの牌を選べる家か（切った直後で、捨てた家以外・配牌入力済み・まだ誰もツモっていない） */
 const callPickable = () => false; // 鳴きは「副露」から入れる（切った直後はロンだけ受け付ける）
+/**
+ * 開始時の手牌が入っている家のチー・ポン・明槓は、いちばん最後に切られた牌（まだ誰もツモっていない）にだけ鳴ける。
+ * 前の巡の牌に鳴くと、今の手牌（その後のツモや打牌を済ませた後の牌）から鳴いたことになり、枚数も手番も合わなくなる。
+ */
+function callTargetError(by, from, idx) {
+  if (!hasStartHand(by)) return null; // 河だけ記録する家は、あとから鳴きを足せる
+  const r = state.seats[from].river[idx];
+  if (!r) return '鳴く牌が見つかりません';
+  if (r.calledBy === by) return null; // 入れ済みの鳴きの直し
+  let steps = [];
+  try { steps = replayTurns(buildBoard(), false); } catch { return null; }
+  const last = steps[steps.length - 1];
+  if (last && last.kind === 'discard' && last.seat === from && last.river === idx) return null;
+  return `鳴けるのは最後に切られた牌だけです（${state.names[from]}の${idx + 1}打目は、もう後の手番が進んでいます）。前の巡の鳴きを足すときは、その後の河を消してから入れ直してください`;
+}
 /** 副露の入力で、自分の手牌から使う牌を選べるか */
 const meldPick = (s) => state.ui.mode === 'meld' && state.ui.seat === s && (state.seats[s].haipai ?? []).length === 13;
 
@@ -1079,6 +1094,8 @@ root.addEventListener('click', (ev) => {
     case 'meldconfirm': {
       const o = uiOptions[Number(v)];
       if (!o) return;
+      const ng = callTargetError(o.seat, o.from, o.idx);
+      if (ng) return flash(ng);
       // チー・ポンは、続けて切る牌を手牌から選ぶ（鳴きと打牌を一度に確定し、手牌の枚数が合わない時間を作らない）
       if (o.kind !== 'daiminkan' && (state.seats[o.seat].haipai ?? []).length === 13) {
         state.ui.meldPending = o;
@@ -1165,6 +1182,8 @@ root.addEventListener('click', (ev) => {
       if (state.ui.mode === 'meld') {
         if (seat === state.ui.seat) return flash('鳴く牌は相手の河からタップしてください');
         if (state.seats[seat].river[idx].calledBy !== undefined && state.seats[seat].river[idx].calledBy !== state.ui.seat) return flash('その牌はもう鳴かれています');
+        const ng = callTargetError(state.ui.seat, seat, idx);
+        if (ng) return flash(ng);
         state.ui.meldTarget = { from: seat, idx };
         // 先にツモ牌を選んでいたら、鳴きの牌からは外す（ツモ牌はチー・ポンに使えない）
         if (state.ui.pick && state.ui.pick.keys.includes('d')) state.ui.pick = { ...state.ui.pick, keys: state.ui.pick.keys.filter((k) => k !== 'd') };
