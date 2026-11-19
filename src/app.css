@@ -100,3 +100,7 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .board .hand .tile { --tw: 20px; }
 .board .hand .tile.sm, .board .river .tile.sm { --tw: 16px; }
 .board .river { min-height:22px; }
+.card.install { display:flex; gap:10px; align-items:center; margin:10px 0; }
+.card.install p { margin:2px 0 0; }
+.top { padding-top:max(8px, env(safe-area-inset-top)); }
+.invite-text { white-space:pre-wrap; font-size:13px; background:#f7f5ef; border:1px dashed var(--line); border-radius:8px; padding:8px; margin:6px 0; }

@@ -1,3 +1,4 @@
+import { InstallHint } from '../lib/install';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { errorText, supabase, type StudySession } from '../lib/supabase';
@@ -49,6 +50,7 @@ export function Sessions() {
 
   return (
     <main>
+      <InstallHint />
       <div className="row between">
         <h2>勉強会</h2>
         <button className="primary" onClick={() => setOpen((o) => !o)}>{open ? '閉じる' : '新しい勉強会'}</button>

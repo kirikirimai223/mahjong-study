@@ -2,8 +2,10 @@ import { useState, type FormEvent } from 'react';
 import { errorText, supabase } from '../lib/supabase';
 
 export function Login() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [email, setEmail] = useState('');
+  // 招待の案内文のリンク（?signup=1&email=…）から来たら、登録の画面でアドレスを入れておく
+  const params = new URLSearchParams(window.location.search);
+  const [mode, setMode] = useState<'signin' | 'signup'>(params.get('signup') ? 'signup' : 'signin');
+  const [email, setEmail] = useState(params.get('email') ?? '');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'bad' | 'good'; text: string } | null>(null);

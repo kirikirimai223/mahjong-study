@@ -12,6 +12,7 @@ export function Members() {
   const [name, setName] = useState(me.display_name);
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState('');
+  const [shown, setShown] = useState<string | null>(null);
 
   async function load() {
     const m = await supabase.from('study_members').select('id, display_name, is_admin').order('created_at');
@@ -37,7 +38,7 @@ export function Members() {
     if (!v) return;
     const { error } = await supabase.from('study_invites').insert({ email: v, invited_by: me.id });
     if (error) return setMsg(/duplicate/.test(error.message) ? 'そのアドレスは招待済みです' : errorText(error));
-    setEmail(''); setMsg(`${v} を招待しました。登録画面からこのアドレスで登録してもらってください`); load();
+    setEmail(''); setShown(v); setMsg(`${v} を招待しました。下の案内文を送ってください`); load();
   }
   async function uninvite(v: string) {
     const { error } = await supabase.from('study_invites').delete().eq('email', v);
@@ -63,12 +64,40 @@ export function Members() {
             <button className="primary">招待</button>
           </form>
           <ul className="list">
-            {invites.map((i) => <li key={i.email} className="card row between"><span>{i.email}</span><button className="danger" onClick={() => uninvite(i.email)}>取り消す</button></li>)}
+            {invites.map((i) => (
+              <li key={i.email} className="card">
+                <div className="row between"><span>{i.email}</span>
+                  <span className="row"><button onClick={() => setShown(shown === i.email ? null : i.email)}>案内文</button><button className="danger" onClick={() => uninvite(i.email)}>取り消す</button></span></div>
+                {shown === i.email && <InviteText email={i.email} onCopied={() => setMsg('案内文をコピーしました')} />}
+              </li>
+            ))}
           </ul>
-          <p className="quiet small">招待を取り消しても、すでに登録した人はメンバーのままです。</p>
+          <p className="quiet small">メールは自動では届きません。案内文をLINEなどで送ってください。招待を取り消しても、すでに登録した人はメンバーのままです。</p>
         </>
       )}
       {msg && <p className="flash-inline">{msg}</p>}
     </main>
+  );
+}
+
+/** 招待した人に送る案内文（登録画面へのリンクつき） */
+function inviteMessage(email: string, origin = window.location.origin) {
+  const url = `${origin}/?signup=1&email=${encodeURIComponent(email)}`;
+  return `麻雀勉強会のアプリに招待しました。\n下のリンクを開き、このメールアドレス（${email}）とパスワードを決めて「登録する」を押してください。\n${url}\nスマホではホーム画面に追加すると、アプリのように使えます。`;
+}
+
+function InviteText({ email, onCopied }: { email: string; onCopied: () => void }) {
+  const text = inviteMessage(email);
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); onCopied(); } catch { /* コピーできない環境では、表示した文を長押しで選んでもらう */ }
+  }
+  async function share() {
+    try { await navigator.share({ text }); } catch { /* 閉じただけ */ }
+  }
+  return (
+    <div>
+      <p className="invite-text">{text}</p>
+      <div className="row"><button className="primary" onClick={copy}>コピー</button>{'share' in navigator && <button onClick={share}>共有</button>}</div>
+    </div>
   );
 }

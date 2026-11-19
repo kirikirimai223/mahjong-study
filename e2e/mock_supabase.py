@@ -67,13 +67,13 @@ async def handle(route):
         for r in rows: t.remove(r)
         return await reply([])
 
-async def open_app(p):
+async def open_app(p, origin='http://localhost:5173'):
     """偽装した Supabase とログイン済みの状態でアプリを開く"""
     b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 390, 'height': 844})
     await ctx.route(BASE + '/**', handle)
     pg = await ctx.new_page()
     errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
-    await pg.goto('http://localhost:5173/')
+    await pg.goto(origin + '/')
     exp = int(time.time()) + 3600
     sess = {'access_token': 'x.y.z', 'refresh_token': 'r', 'expires_at': exp, 'expires_in': 3600, 'token_type': 'bearer',
             'user': {'id': ME, 'email': 'me@example.com', 'aud': 'authenticated', 'role': 'authenticated'}}
