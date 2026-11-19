@@ -509,11 +509,13 @@ function afterCallDiscards() {
   const out = [new Set(), new Set(), new Set(), new Set()];
   let steps;
   try { steps = replayTurns(buildBoard(), false); } catch { return out; }
-  const called = [false, false, false, false];
+  // 0：なし／1：鳴いた直後（次の打牌に印）／2：明槓の直後（嶺上牌をツモってから切る打牌に印）
+  const called = [0, 0, 0, 0];
   for (const x of steps) {
-    if (x.kind === 'call') called[x.seat] = x.meld.kind !== 'daiminkan';
-    else if (x.kind === 'draw') called[x.seat] = false;
-    else if (x.kind === 'discard') { if (called[x.seat]) out[x.seat].add(x.river); called[x.seat] = false; }
+    if (x.kind === 'call') called[x.seat] = x.meld.kind === 'daiminkan' ? 2 : 1;
+    else if (x.kind === 'draw') called[x.seat] = called[x.seat] === 2 ? 1 : 0;
+    else if (x.kind === 'kan') { /* 明槓の後の加槓・暗槓：嶺上牌をツモった後の打牌まで印を持ち越す */ if (called[x.seat]) called[x.seat] = 2; }
+    else if (x.kind === 'discard') { if (called[x.seat] === 1) out[x.seat].add(x.river); called[x.seat] = 0; }
   }
   return out;
 }
@@ -807,6 +809,15 @@ function handRow(s) {
   const tag = '';
   const cutting = shown.kind === 'current' || shown.kind === 'meldcut';
   const pick = state.ui.pick && state.ui.pick.seat === s ? state.ui.pick.keys : [];
+  // ツモ和了の和了牌を選んでいるとき：和了した家の手牌をタップして和了牌にできる
+  const winPick = state.ui.mode === 'win' && state.result.kind === 'agari' && Number(state.result.winner) === s && Number(state.result.from) === s;
+  if (winPick) {
+    const wt = state.result.winTile ?? (state.ui.pendingDraw && state.ui.pendingDraw.seat === s ? state.ui.pendingDraw.tile : null);
+    const tiles = shown.tiles.map((t) => tileHTML(t, 'cuttable', `data-act="wintile" data-seat="${s}" data-t="${t}"`)).join('');
+    const melds0 = b.melds.map((m, i) => (m.kind === 'kakan' ? '' : `<span class="meld" data-seat="${s}" data-idx="${i}">${meldTiles(m, s, i)}</span>`)).filter(Boolean).reverse().join('');
+    const pdw = !state.result.winTile && state.ui.pendingDraw && state.ui.pendingDraw.seat === s;
+    return `${tiles}<span class="gap"></span>${wt ? tileHTML(wt, `drawn winning ${pdw ? 'cuttable' : ''}`, pdw ? `data-act="wintile" data-seat="${s}" data-t="${wt}" data-drawn="1"` : '') : '<span class="tile ghost small"><span class="face">和了</span></span>'}<span class="gap"></span>${melds0}`;
+  }
   const hand = tag + shown.tiles.map((t, i) => (cutting
     ? tileHTML(t, `cuttable ${pick.includes(`h${i}`) ? 'picked' : ''}`, `data-act="${shown.kind === 'meldcut' ? 'meldcut' : meldPick(s) ? 'mpick' : 'cut'}" data-seat="${s}" data-t="${t}" data-key="h${i}"`)
     : tileHTML(t, sh && sh.seat === s && sh.idx === i ? 'sel' : '', `data-act="hand" data-seat="${s}" data-idx="${i}"`))).join('')
@@ -998,7 +1009,7 @@ function resultHTML() {
       <label>放銃者<select data-bind="result.from">${opt(r.from, true)}</select></label>
       <label>点数表記<input data-bind="result.points" value="${r.points}" placeholder="30符2飜2900点"></label>
     </div>
-    ${r.winner == r.from ? `<div class="seg">和了牌：${r.winTile ? tileHTML(r.winTile, 'mini') : '未入力'} <button data-act="mode" data-v="win" class="${state.ui.mode === 'win' ? 'on' : ''}">パレットで選ぶ</button></div>` : '<p class="hint">ロン牌は放銃者の河の最後の牌として扱います（槍槓は加槓した牌）</p>'}
+    ${r.winner == r.from ? `<div class="seg">和了牌：${r.winTile ? tileHTML(r.winTile, 'mini') : '未入力'} <button data-act="mode" data-v="win" class="${state.ui.mode === 'win' ? 'on' : ''}">選ぶ</button></div>${state.ui.mode === 'win' ? '<p class="hint">和了牌を、パレットか和了した家の手牌からタップ</p>' : ''}` : '<p class="hint">ロン牌は放銃者の河の最後の牌として扱います（槍槓は加槓した牌）</p>'}
     <label class="wide">役（1行に1つ）<textarea data-bind="result.yaku" rows="3" placeholder="断幺九(1飜)">${r.yaku}</textarea></label>`
     : `<label class="wide">流局の種類<input data-bind="result.reason" value="${r.reason}"></label>`}
     ${r.kind === 'none' ? '' : `<div class="grid">${[0, 1, 2, 3].map((s) => `<label>${state.names[s]}の収支<input type="number" step="100" data-bind="result.deltas.${s}" value="${r.deltas[s]}"></label>`).join('')}</div>`}
@@ -1076,6 +1087,16 @@ root.addEventListener('click', (ev) => {
       if (!drawnEl) return flash('先にパレットでツモ牌を選んでください');
       drawnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
       return;
+    }
+    case 'wintile': {
+      ev.stopPropagation();
+      const t = Number(el.dataset.t);
+      const drawn = el.dataset.drawn === '1';
+      return commit((st) => {
+        st.result.winTile = t;
+        if (drawn) st.ui.pendingDraw = null;
+        st.ui.flashAfter = `和了牌を${tileName(t)}にしました（今の手牌に${tileName(t)}をツモって和了。違うときは別の牌をタップ）`;
+      });
     }
     case 'zone': {
       // 河・手牌の何もない所をタップ：その家に視点を移して、その場所の編集に入る
