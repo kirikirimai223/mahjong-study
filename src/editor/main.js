@@ -514,6 +514,9 @@ function riverRows(s) {
   const b = state.seats[s];
   const sel = state.ui.selected;
   const afterCall = (afterCallCache ??= afterCallDiscards())[s];
+  const tg0 = state.ui.meldTarget;
+  const afterTarget = tg0 && state.ui.mode === 'meld' && state.ui.seat === s && hasStartHand(s) && (state.seats[tg0.from].river[tg0.idx]?.calledBy ?? s) === s
+    ? afterCallIndex(s, tg0.from, tg0.idx) : null;
   const bad = new Map(issuesFor(s, 'river').map((i) => [i.index, i.message]));
   const cells = b.river.map((r, i) => {
     const cls = [
@@ -525,6 +528,7 @@ function riverRows(s) {
       sel && sel.seat === s && sel.idx === i ? 'sel' : '',
       bad.has(i) ? 'bad' : '',
       state.ui.meldTarget && state.ui.meldTarget.from === s && state.ui.meldTarget.idx === i ? 'target' : '',
+      afterTarget && afterTarget.idx === i ? 'nextaftercall' : '',
     ].join(' ');
     return tileHTML(r.tile, cls, `data-act="river" data-seat="${s}" data-idx="${i}"`);
   });
@@ -642,6 +646,7 @@ function meldPanelHTML(seat) {
   }
   return `<div class="ctx">
     ${step('①', !!target, target ? `鳴く牌：${state.names[tg.from]}の ${tileHTML(target.tile, 'mini')}（${tg.idx + 1}打目）` : '相手の河から鳴く牌をタップ（槓なら飛ばす）')}
+    ${target && hasHaipai && (target.calledBy ?? seat) === seat ? (() => { const n = afterCallNote(seat, tg.from, tg.idx); return n ? `<p class="hint aftercallnote">${n}</p>` : ''; })() : ''}
     ${step('②', own.length > 0, `${state.names[seat]}の${hasHaipai ? '手牌' : 'パレット'}から使う牌を${hasHaipai ? 'タップ' : '選ぶ'}：${own.map((t) => tileHTML(t, 'mini')).join('') || '<small>未選択</small>'}`)}
     <div class="seg">${confirm}<button data-act="meldreset">やり直し</button><button data-act="mode" data-v="river">やめる</button></div>
     <p class="hint">鳴く家を変えるときは、その家の手牌をタップ。副露をタップすると削除・加槓・槓前のツモを直せます</p>
@@ -677,19 +682,36 @@ const sameTiles = (a, b) => JSON.stringify([...a].sort((x, y) => x - y)) === JSO
 /** 鳴きの牌を選べる家か（切った直後で、捨てた家以外・配牌入力済み・まだ誰もツモっていない） */
 const callPickable = () => false; // 鳴きは「副露」から入れる（切った直後はロンだけ受け付ける）
 /**
- * 開始時の手牌が入っている家のチー・ポン・明槓は、いちばん最後に切られた牌（まだ誰もツモっていない）にだけ鳴ける。
- * 前の巡の牌に鳴くと、今の手牌（その後のツモや打牌を済ませた後の牌）から鳴いたことになり、枚数も手番も合わなくなる。
+ * 前の巡の牌に鳴くとき、鳴いた家のどの打牌が「鳴いた後の打牌」になるか。
+ * 鳴きを入れた盤面で手番をたどり、鳴きの次に来るその家の打牌を返す。
+ * 返り値：{ idx } … その家の河の idx 番目 / { idx: null } … まだ打牌がない（最後に切られた牌への鳴き） / null … たどれない
  */
-function callTargetError(by, from, idx) {
-  if (!hasStartHand(by)) return null; // 河だけ記録する家は、あとから鳴きを足せる
+function afterCallIndex(by, from, idx, kind = 'pon') {
   const r = state.seats[from].river[idx];
-  if (!r) return '鳴く牌が見つかりません';
-  if (r.calledBy === by) return null; // 入れ済みの鳴きの直し
+  if (!r) return null;
+  const board = buildBoard();
+  const meld = { kind, from, riverIndex: idx, called: r.tile, own: [] };
+  board.seats = board.seats.map((sb, k) => ({
+    ...sb,
+    river: k === from ? sb.river.map((x, i) => (i === idx ? { ...x, calledBy: by } : x)) : sb.river,
+    melds: k === by ? [...sb.melds.filter((m) => !(m.from === from && m.riverIndex === idx)), meld] : sb.melds,
+  }));
   let steps = [];
-  try { steps = replayTurns(buildBoard(), false); } catch { return null; }
-  const last = steps[steps.length - 1];
-  if (last && last.kind === 'discard' && last.seat === from && last.river === idx) return null;
-  return `鳴けるのは最後に切られた牌だけです（${state.names[from]}の${idx + 1}打目は、もう後の手番が進んでいます）。前の巡の鳴きを足すときは、その後の河を消してから入れ直してください`;
+  try { steps = replayTurns(board, false); } catch { return null; }
+  const at = steps.findIndex((st) => st.kind === 'call' && st.meld === meld);
+  if (at < 0) return null;
+  const next = steps.slice(at + 1).find((st) => st.kind === 'discard');
+  if (next && next.seat === by) return { idx: next.river };
+  return board.seats[by].river.length > 0 && next ? null : { idx: null };
+}
+/** 「この牌を鳴くと、何打目が鳴いた後の打牌になるか」の案内 */
+function afterCallNote(by, from, idx, kind) {
+  const a = afterCallIndex(by, from, idx, kind);
+  if (!a) return '';
+  if (a.idx === null) return '';
+  const r = state.seats[by].river[a.idx];
+  return `この牌を鳴くと、${state.names[by]}の${a.idx + 1}打目 ${tileHTML(r.tile, 'mini')} が鳴いた後の打牌（手出し・ツモなし）になります`
+    + (r.draw !== undefined ? `。その前に入れてあるツモ（${tileName(r.draw)}）は取り消されます${r.draw === r.tile ? '（ツモ切りではなく手牌から切ったことになります）' : ''}` : '');
 }
 /** 副露の入力で、自分の手牌から使う牌を選べるか */
 const meldPick = (s) => state.ui.mode === 'meld' && state.ui.seat === s && (state.seats[s].haipai ?? []).length === 13;
@@ -858,6 +880,9 @@ function contextHTML() {
       <div class="seg"><b>${state.names[seat]}の手牌（局の開始時） ${arr.length}/13</b>
       ${sh && arr[sh.idx] !== undefined ? `選択中 ${tileHTML(arr[sh.idx], 'mini')} <button data-act="delhand">削除</button><small>パレットで選ぶと差し替え</small>`
         : `<small>${arr.length >= 13 ? '13枚そろいました。牌をタップすると差し替え・削除できます' : 'パレットで13枚選ぶ。牌をタップすると差し替え・削除'}</small>`}</div>
+      ${arr.length > 0 ? (state.ui.confirmClearHaipai === seat
+        ? `<div class="seg"><small>${state.names[seat]}の開始時の手牌${arr.length}枚をすべて消します（河・副露はそのまま）</small><button class="danger" data-act="clearhaipai" data-v="yes">すべて消す</button><button data-act="clearhaipai" data-v="no">やめる</button></div>`
+        : `<div class="seg"><button data-act="clearhaipai">この家の手牌をすべて消す</button></div>`) : ''}
       ${arr.length >= 13 ? '<div class="seg"><button class="primary" data-act="mode" data-v="river">ツモ・打牌の入力へ</button></div>' : ''}</div>`;
   }
   if (mode === 'meld') return meldPanelHTML(seat);
@@ -1001,6 +1026,16 @@ root.addEventListener('click', (ev) => {
     }
     case 'center': return focus(state.ui.seat, state.ui.mode === 'ura' ? 'ura' : 'dora');
     case 'rinsert': state.ui.riverInsert = state.ui.riverInsert === v ? null : v; return render();
+    case 'clearhaipai': {
+      const seat = state.ui.seat;
+      if (!v) { state.ui.confirmClearHaipai = seat; return render(); }
+      if (v === 'no') { state.ui.confirmClearHaipai = null; return render(); }
+      return commit((st) => {
+        st.seats[seat].haipai = []; st.ui.selectedHand = null; st.ui.confirmClearHaipai = null; st.ui.pendingDraw = null;
+        st.ui.mode = 'hand'; st.ui.handTarget = 'haipai';
+        st.ui.flashAfter = `${st.names[seat]}の開始時の手牌を消しました。パレットで13枚選び直してください（「戻す」で元に戻せます）`;
+      });
+    }
     case 'delhand': return commit((st) => { const sh = st.ui.selectedHand; (st.ui.handTarget === 'haipai' ? st.seats[sh.seat].haipai : st.seats[sh.seat].hand).splice(sh.idx, 1); st.ui.selectedHand = null; });
     case 'htarget': state.ui.handTarget = v; state.ui.selectedHand = null; return render();
     case 'mode': return focus(state.ui.seat, v, { selected: v === 'river' ? state.ui.selected : null });
@@ -1094,8 +1129,26 @@ root.addEventListener('click', (ev) => {
     case 'meldconfirm': {
       const o = uiOptions[Number(v)];
       if (!o) return;
-      const ng = callTargetError(o.seat, o.from, o.idx);
-      if (ng) return flash(ng);
+      const after = (state.seats[o.seat].haipai ?? []).length === 13 && (state.seats[o.from].river[o.idx].calledBy ?? o.seat) === o.seat
+        ? afterCallIndex(o.seat, o.from, o.idx, o.kind) : null;
+      if (after && after.idx !== null) {
+        // 前の巡の牌への鳴き：鳴いた後の打牌は、もう河にある（その打牌のツモはなかったことにする）
+        return commit((st) => {
+          const r = st.seats[o.from].river[o.idx];
+          r.calledBy = o.seat;
+          const b = st.seats[o.seat];
+          b.melds = b.melds.filter((m) => !(m.from === o.from && m.riverIndex === o.idx));
+          b.melds.push({ kind: o.kind, from: o.from, riverIndex: o.idx, called: r.tile, own: [...o.own] });
+          const d = o.kind === 'daiminkan' ? null : b.river[after.idx];
+          const dropped = d && d.draw !== undefined ? d.draw : undefined;
+          if (d) { delete d.draw; d.tsumogiri = false; }
+          st.ui.meldTarget = null; st.ui.pick = null; st.ui.pendingOwn = []; st.ui.callWindow = null; st.ui.meldPending = null;
+          st.ui.mode = 'river'; st.ui.selected = null;
+          st.ui.flashAfter = `${KIND_NAME[o.kind]}しました。${st.names[o.seat]}の${after.idx + 1}打目（${tileName(b.river[after.idx].tile)}）を鳴いた後の打牌にしました`
+            + (dropped !== undefined ? `。その前のツモ（${tileName(dropped)}）は取り消しました` : '')
+            + (o.kind === 'daiminkan' ? '。嶺上牌はその打牌の「ツモ」に入れてください' : '');
+        });
+      }
       // チー・ポンは、続けて切る牌を手牌から選ぶ（鳴きと打牌を一度に確定し、手牌の枚数が合わない時間を作らない）
       if (o.kind !== 'daiminkan' && (state.seats[o.seat].haipai ?? []).length === 13) {
         state.ui.meldPending = o;
@@ -1182,8 +1235,6 @@ root.addEventListener('click', (ev) => {
       if (state.ui.mode === 'meld') {
         if (seat === state.ui.seat) return flash('鳴く牌は相手の河からタップしてください');
         if (state.seats[seat].river[idx].calledBy !== undefined && state.seats[seat].river[idx].calledBy !== state.ui.seat) return flash('その牌はもう鳴かれています');
-        const ng = callTargetError(state.ui.seat, seat, idx);
-        if (ng) return flash(ng);
         state.ui.meldTarget = { from: seat, idx };
         // 先にツモ牌を選んでいたら、鳴きの牌からは外す（ツモ牌はチー・ポンに使えない）
         if (state.ui.pick && state.ui.pick.keys.includes('d')) state.ui.pick = { ...state.ui.pick, keys: state.ui.pick.keys.filter((k) => k !== 'd') };
