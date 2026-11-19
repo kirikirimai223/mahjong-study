@@ -20,7 +20,7 @@ async def main():
         after = {t: await left(t) for t in (36, 38, 28)}
         fl = await pg.evaluate(f"() => {sr}.querySelector('.flash')?.innerText ?? ''")
         ok = (s['seats'][2]['haipai'] == [] and s['seats'][2]['melds'] == [] and len(s['seats'][2]['river']) == 14
-              and all('calledBy' not in r for x in s['seats'] for r in x['river'])
+              and all(r.get('calledBy') != 2 for x in s['seats'] for r in x['river']) and s['seats'][3]['river'][12].get('calledBy') == 1
               and '副露3つ' in note and '副露3つ' in fl
               and after == {36: '3', 38: '4', 28: '2'})
         print(json.dumps({'ok': ok and not errs, 'before': before, 'after': after, 'note': note, 'flash': fl, 'errors': errs}, ensure_ascii=False))
