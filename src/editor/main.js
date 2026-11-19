@@ -106,6 +106,7 @@ function undo() {
   const prev = history.pop();
   if (!prev) return;
   state = JSON.parse(prev);
+  state.ui.riverMove = null;
   render();
   changed();
 }
@@ -329,7 +330,7 @@ function deleteRiver(st, seat, idx) {
 
 /** 河や副露の位置を指したままの画面の状態（鳴きの候補・選択中の牌など）を外す */
 function clearStaleUi(st) {
-  Object.assign(st.ui, { selected: null, selectedMeld: null, callWindow: null, meldPending: null, meldTarget: null, pick: null, pendingOwn: [], riverInsert: null, afterPick: null, extFrom: null });
+  Object.assign(st.ui, { selected: null, selectedMeld: null, callWindow: null, meldPending: null, meldTarget: null, pick: null, pendingOwn: [], riverInsert: null, afterPick: null, extFrom: null, riverMove: null });
 }
 
 /** 鳴きの直後に鳴いた家が切った牌の、河の位置（チー・ポンは鳴いた直後、明槓は嶺上牌の後）。分からなければ -1 */
@@ -512,14 +513,14 @@ function issuesFor(seat, area) {
 }
 
 /** 鳴いた直後に切った牌（チー・ポンのあとの手出し）の河の位置。家ごとの Set */
-function afterCallDiscards() {
+function afterCallDiscards(chiPonOnly = false) {
   const out = [new Set(), new Set(), new Set(), new Set()];
   let steps;
   try { steps = replayTurns(buildBoard(), false); } catch { return out; }
   // 0：なし／1：鳴いた直後（次の打牌に印）／2：明槓の直後（嶺上牌をツモってから切る打牌に印）
   const called = [0, 0, 0, 0];
   for (const x of steps) {
-    if (x.kind === 'call') called[x.seat] = x.meld.kind === 'daiminkan' ? 2 : 1;
+    if (x.kind === 'call') called[x.seat] = x.meld.kind === 'daiminkan' ? (chiPonOnly ? 0 : 2) : 1;
     else if (x.kind === 'draw') called[x.seat] = called[x.seat] === 2 ? 1 : 0;
     else if (x.kind === 'kan') { /* 明槓の後の加槓・暗槓：嶺上牌をツモった後の打牌まで印を持ち越す */ if (called[x.seat]) called[x.seat] = 2; }
     else if (x.kind === 'discard') { if (called[x.seat] === 1) out[x.seat].add(x.river); called[x.seat] = 0; }
@@ -751,6 +752,34 @@ function afterCallNote(by, from, idx, kind) {
   return `この牌を鳴くと、${state.names[by]}の${a.idx + 1}打目 ${tileHTML(r.tile, 'mini')} が鳴いた後の打牌（手出し・ツモなし）になります`
     + (r.draw !== undefined ? `。その前に入れてあるツモ（${tileName(r.draw)}）は取り消されます${r.draw === r.tile ? '（ツモ切りではなく手牌から切ったことになります）' : ''}` : '');
 }
+/**
+ * 河の牌を別の巡目へ動かす（move）／2枚を入れ替える（swap）。牌はツモ・ツモ切り・立直・鳴かれた印ごと動く。
+ * 動かした後、鳴いた直後の打牌になった位置にツモが入っていたら外す（鳴いた後はツモがない）。
+ */
+function moveInRiver(kind, seat, from, to) {
+  const moved = state.seats[seat].river[from].tile;
+  let fixes = [];
+  commit((st) => {
+    if (kind === 'move') moveRiverTile(st, seat, from, to);
+    else {
+      const river = st.seats[seat].river;
+      [river[from], river[to]] = [river[to], river[from]];
+      const map = (i) => (i === from ? to : i === to ? from : i);
+      for (const b of st.seats) b.melds = b.melds.map((m) => (m.from === seat && m.riverIndex !== undefined ? { ...m, riverIndex: map(m.riverIndex) } : m));
+    }
+    st.ui.riverMove = null; st.ui.selected = { seat, idx: to }; st.ui.riverInsert = null;
+    // 鳴いた直後の打牌の位置に来た牌のツモを外す（commit の中では st が今の状態）
+    afterCallCache = null;
+    fixes = [...afterCallDiscards(true)[seat]].filter((i) => st.seats[seat].river[i]?.draw !== undefined);
+    for (const i of fixes) { const r = st.seats[seat].river[i]; delete r.draw; r.tsumogiri = false; }
+    afterCallCache = null;
+  });
+  const n = state.names[seat];
+  const missing = issuesFor(seat).filter((i) => i.level === 'error').length;
+  flash(`${n}の${tileName(moved)}を${to + 1}打目${kind === 'move' ? 'へ動かしました' : 'と入れ替えました'}`
+    + (fixes.length ? `。${fixes.map((i) => `${i + 1}打目`).join('・')}は鳴いた直後の打牌なので、ツモを外して手出しにしました` : '')
+    + (missing ? `。まだ矛盾が${missing}件あります（下の一覧を確認）` : ''));
+}
 /** 河の牌を idx から p へ動かしたときの、旧位置→新位置 */
 function moveMap(n, idx, p) {
   const order = [...Array(n).keys()];
@@ -952,6 +981,9 @@ function contextHTML() {
         <button data-act="rinsert" data-v="before" class="${state.ui.riverInsert === 'before' ? 'on' : ''}">この前に1枚入れる</button>
         <button data-act="delriver">削除</button>
         ${state.ui.riverInsert ? `<small>パレットで牌を選ぶ</small>` : ''}</div>
+        <div class="seg"><button data-act="rmove" data-v="move" class="${state.ui.riverMove?.kind === 'move' ? 'on' : ''}">別の巡目へ動かす</button>
+        <button data-act="rmove" data-v="swap" class="${state.ui.riverMove?.kind === 'swap' ? 'on' : ''}">別の牌と入れ替える</button>
+        ${state.ui.riverMove ? `<small>${state.ui.riverMove.kind === 'move' ? '置きたい巡目の牌をタップ（その位置に入り、間の牌は1つずつずれます）' : '入れ替える相手の牌をタップ'}</small>` : ''}</div>
         ${r.calledBy !== undefined ? (() => { const m = state.seats[r.calledBy].melds.find((x) => x.from === selected.seat && x.riverIndex === selected.idx); return `<div class="seg"><small>${state.names[r.calledBy]}が${m ? KIND_NAME[m.kind] : '鳴'}した牌</small><button data-act="unmeld">この副露を取り消す</button></div>`; })() : ''}` : cutMode(seat) ? '' : '<p class="hint">パレットで捨てた順に置きます。河の牌をタップすると、手出し/ツモ切り・立直・差し替え・挿入ができます</p>'}
     </div>`;
   }
@@ -1117,7 +1149,14 @@ root.addEventListener('click', (ev) => {
       return focus(seat, mode);
     }
     case 'center': return focus(state.ui.seat, state.ui.mode === 'ura' ? 'ura' : 'dora');
-    case 'rinsert': state.ui.riverInsert = state.ui.riverInsert === v ? null : v; return render();
+    case 'rinsert': state.ui.riverInsert = state.ui.riverInsert === v ? null : v; state.ui.riverMove = null; return render();
+    case 'rmove': {
+      const sel = state.ui.selected;
+      if (!sel) return;
+      state.ui.riverMove = state.ui.riverMove?.kind === v ? null : { kind: v, seat: sel.seat, idx: sel.idx };
+      state.ui.riverInsert = null;
+      return render();
+    }
     case 'clearhaipai': {
       const seat = state.ui.seat;
       if (!v) { state.ui.confirmClearHaipai = seat; return render(); }
@@ -1356,6 +1395,13 @@ root.addEventListener('click', (ev) => {
         // 先にツモ牌を選んでいたら、鳴きの牌からは外す（ツモ牌はチー・ポンに使えない）
         if (state.ui.pick && state.ui.pick.keys.includes('d')) state.ui.pick = { ...state.ui.pick, keys: state.ui.pick.keys.filter((k) => k !== 'd') };
         return render();
+      }
+      // 河の牌を動かす・入れ替える：同じ家の河の行き先をタップ
+      const rm = state.ui.riverMove;
+      if (rm && state.ui.mode === 'river') {
+        if (seat !== rm.seat) return flash(`${state.names[rm.seat]}の河の牌をタップしてください（別の家の河へは動かせません）`);
+        if (idx === rm.idx) { state.ui.riverMove = null; return render(); }
+        return moveInRiver(rm.kind, seat, rm.idx, idx);
       }
       // 他家の河：視点を移してその牌を選ぶ。正面の河：選択の切り替え
       if (state.ui.seat !== seat || state.ui.mode !== 'river') return focus(seat, 'river', { selected: { seat, idx, tapped: true } });
