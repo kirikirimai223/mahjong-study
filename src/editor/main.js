@@ -995,7 +995,7 @@ function contextHTML() {
       ${sh && arr[sh.idx] !== undefined ? `選択中 ${tileHTML(arr[sh.idx], 'mini')} <button data-act="delhand">削除</button><small>パレットで選ぶと差し替え</small>`
         : `<small>${arr.length >= 13 ? '13枚そろいました。牌をタップすると差し替え・削除できます' : 'パレットで13枚選ぶ。牌をタップすると差し替え・削除'}</small>`}</div>
       ${arr.length > 0 ? (state.ui.confirmClearHaipai === seat
-        ? `<div class="seg"><small>${state.names[seat]}の開始時の手牌${arr.length}枚をすべて消します（河・副露はそのまま）</small><button class="danger" data-act="clearhaipai" data-v="yes">すべて消す</button><button data-act="clearhaipai" data-v="no">やめる</button></div>`
+        ? `<div class="seg"><small>${state.names[seat]}の開始時の手牌${arr.length}枚${b.melds.length ? `と副露${b.melds.length}つ` : ''}をすべて消します（河はそのまま）</small><button class="danger" data-act="clearhaipai" data-v="yes">すべて消す</button><button data-act="clearhaipai" data-v="no">やめる</button></div>`
         : `<div class="seg"><button data-act="clearhaipai">この家の手牌をすべて消す</button></div>`) : ''}
       ${arr.length >= 13 ? '<div class="seg"><button class="primary" data-act="mode" data-v="river">ツモ・打牌の入力へ</button></div>' : ''}</div>`;
   }
@@ -1162,9 +1162,15 @@ root.addEventListener('click', (ev) => {
       if (!v) { state.ui.confirmClearHaipai = seat; return render(); }
       if (v === 'no') { state.ui.confirmClearHaipai = null; return render(); }
       return commit((st) => {
-        st.seats[seat].haipai = []; st.ui.selectedHand = null; st.ui.confirmClearHaipai = null; st.ui.pendingDraw = null;
+        // 副露に使った牌も開始時の手牌から出ているので、副露もまとめて消す（鳴かれた牌は相手の河に普通の牌として残す）
+        const b = st.seats[seat];
+        const nMeld = b.melds.length;
+        b.haipai = []; b.hand = []; b.melds = [];
+        for (const sb of st.seats) for (const r of sb.river) if (r.calledBy === seat) delete r.calledBy;
+        st.ui.selectedHand = null; st.ui.selectedMeld = null; st.ui.confirmClearHaipai = null; st.ui.pendingDraw = null;
+        st.ui.pick = null; st.ui.pendingOwn = []; st.ui.meldTarget = null; st.ui.meldPending = null; st.ui.callWindow = null;
         st.ui.mode = 'hand'; st.ui.handTarget = 'haipai';
-        st.ui.flashAfter = `${st.names[seat]}の開始時の手牌を消しました。パレットで13枚選び直してください（「戻す」で元に戻せます）`;
+        st.ui.flashAfter = `${st.names[seat]}の開始時の手牌${nMeld ? `と副露${nMeld}つ` : ''}を消しました。パレットで13枚選び直してください（「戻す」で元に戻せます）`;
       });
     }
     case 'delhand': return commit((st) => { const sh = st.ui.selectedHand; (st.ui.handTarget === 'haipai' ? st.seats[sh.seat].haipai : st.seats[sh.seat].hand).splice(sh.idx, 1); st.ui.selectedHand = null; });
