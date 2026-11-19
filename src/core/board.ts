@@ -263,7 +263,7 @@ export function forwardPlan(board: BoardSnapshot, s: Seat, steps: Step[], pool: 
     if (i >= 0) { hand.splice(i, 1); return undefined; }
     const cands = hand.map((h, k) => [h, k] as const).filter(([h]) => 'slot' in h && h.slot.tile === undefined && h.slot !== notSlot);
     if (cands.length === 0 || (pool && (pool.get(t) ?? 0) <= 0)) {
-      const err = new BoardError(s, `${nm}の${where}（${tileName(t)}）：手の中にこの牌がない（開始時の手牌になく、それまでのツモでも引けない）`);
+      const err = new BoardError(s, `${nm}の${where}（${tileName(t)}）：手の中にこの牌がない（開始時の手牌になく、それまでのツモでも引けない。そのぶん手牌が1枚多く残ります）`);
       (err as BoardError & { riverIndex?: number }).riverIndex = riverIndex;
       throw err;
     }

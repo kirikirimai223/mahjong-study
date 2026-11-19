@@ -369,6 +369,13 @@ function handArr(seat) {
   const b = state.seats[seat];
   return (state.ui.handTarget === 'haipai' ? b.haipai : b.hand) ?? [];
 }
+/** 手の中にない牌を切った分だけ、手牌が多く残っている枚数（開始時の手牌がある家だけ） */
+function handOver(seat) {
+  if (!hasStartHand(seat)) return 0;
+  const sh = shownHand(seat);
+  if (sh.kind !== 'current') return 0;
+  return Math.max(0, sh.tiles.length - handLimit(seat));
+}
 function handLimit(seat) {
   return 13 - 3 * state.seats[seat].melds.filter((m) => m.kind !== 'kakan').length;
 }
@@ -852,7 +859,7 @@ function layerHTML(s) {
     <div class="zone hand-zone ${handBad || meldBad ? 'bad' : ''} ${active && (state.ui.mode === 'hand' || state.ui.mode === 'meld') ? 'editing' : ''}" data-act="zone" data-zone="hand" data-seat="${s}">${handRow(s)}</div>
     <div class="seatlabel ${handBad ? 'bad' : ''}" data-act="zone" data-zone="label" data-seat="${s}">
       <b>${windOf(s)}</b>${state.names[s]}${riichi ? '<span class="stick"></span>' : ''}
-      <span class="cnt ${handBad ? 'ng' : 'ok'}">${hasStartHand(s) ? `${shownHand(s).tiles.length + (state.ui.pendingDraw && state.ui.pendingDraw.seat === s ? 1 : 0)}枚` : `${c.haipai}/13`}</span>
+      <span class="cnt ${handBad || handOver(s) ? 'ng' : 'ok'}">${hasStartHand(s) ? `${shownHand(s).tiles.length + (state.ui.pendingDraw && state.ui.pendingDraw.seat === s ? 1 : 0)}枚${handOver(s) ? `・${handOver(s)}枚多い` : ''}` : `${c.haipai}/13`}</span>
     </div>
   </div>`;
 }
@@ -1228,7 +1235,8 @@ root.addEventListener('click', (ev) => {
         const prevMeld = o.keep ? state.seats[o.seat].melds.find((m) => m.from === o.from && m.riverIndex === o.idx) : null;
         const prevAfter = prevMeld ? callFollowUp(state, o.seat, prevMeld) : -1;
         if (o.keep && after.idx === prevAfter && place === o.idx) return flash('鳴いた後の打牌は今と同じです。違う打牌を自分の河からタップしてください');
-        return commit((st) => {
+        const afterTile = state.seats[o.seat].river[after.idx]?.tile;
+        commit((st) => {
           const b = st.seats[o.seat];
           b.melds = b.melds.filter((m) => !(m.from === o.from && m.riverIndex === o.idx));
           moveRiverTile(st, o.from, o.idx, place);
@@ -1246,6 +1254,12 @@ root.addEventListener('click', (ev) => {
             + (dropped !== undefined ? `。その前のツモ（${tileName(dropped)}）は取り消しました` : '')
             + (o.kind === 'daiminkan' ? '。嶺上牌はその打牌の「ツモ」に入れてください' : '');
         });
+        // 鳴いた後の打牌は手牌から切る。その牌が手の中にないと、手牌が1枚多く残るので知らせる
+        const bad = currentIssues.find((i) => i.seat === o.seat && i.area === 'river' && i.index === after.idx && i.level === 'error');
+        if (bad && afterTile !== undefined && o.kind !== 'daiminkan') {
+          flash(`${KIND_NAME[o.kind]}しましたが、${state.names[o.seat]}の${after.idx + 1}打目（${tileName(afterTile)}）は手牌にない牌です。鳴いた後は手牌から切るので、このままでは手牌が1枚多く残ります。前の巡で${tileName(afterTile)}をツモって残していたなら、その巡を「手牌から切った」に直してください`);
+        }
+        return;
       }
       // チー・ポンは、続けて切る牌を手牌から選ぶ（鳴きと打牌を一度に確定し、手牌の枚数が合わない時間を作らない）
       if (o.kind !== 'daiminkan' && (state.seats[o.seat].haipai ?? []).length === 13) {
