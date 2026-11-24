@@ -4,7 +4,7 @@ import tilesCss from './tiles.css?inline';
 import styleCss from './style.css?inline';
 import { BoardError, seededRandom, effectiveTsumogiri, knownTiles, logToBoard, reconstruct, replayTurns, sortTiles } from '../core/board';
 import { kindOf, tileName } from '../core/types';
-import { missingDrawTurns, diagnose, seatCounts } from '../core/diagnose';
+import { missingDrawTurns, diagnose, seatCounts, riverLimits } from '../core/diagnose';
 import { callOptions, kanOptions } from './calls.js';
 import { SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL } from '../../test/fixtures';
 const SAMPLES = [['南三局（チー・立直）', SAMPLE_URL], ['四槓子（ポン・槓）', KAN_URL], ['嶺上開花', RINSHAN_URL], ['槍槓', CHANKAN_URL]];
@@ -173,6 +173,10 @@ function tapPalette(t) {
       return flash(target === 'haipai' ? '手牌（開始時）は13枚までです。差し替えるときは牌をタップしてから選んでください'
         : `倒した手牌は${limit}枚までです${n ? `（副露${n}つ）` : ''}。差し替えるときは牌をタップしてから選んでください`);
     }
+  }
+  if (mode === 'river' && state.ui.riverInsert !== 'replace' && state.ui.riverInsert !== 'draw' && !cutMode(seat)) {
+    const ng = riverFullError(seat);
+    if (ng) return flash(ng);
   }
   if ((mode === 'dora' || mode === 'ura') && (mode === 'dora' ? state.setup.doraIndicators : state.setup.uraIndicators).length >= 5) {
     return flash(`${mode === 'dora' ? 'ドラ' : '裏ドラ'}表示牌は5枚までです`);
@@ -942,6 +946,16 @@ function haipaiSlotRemaining(t) {
   if (selectedHand && selectedHand.seat === seat) arr[selectedHand.idx] = t; else arr.push(t);
   return remaining(t, usedCounts(board)) + 1;
 }
+/** その家の河にもう1枚置くと、この局で切れる枚数を超えるなら、その知らせ */
+function riverFullError(seat) {
+  const board = buildBoard();
+  const lim = riverLimits(board);
+  const n = state.seats[seat].river.length;
+  if (n + 1 > lim.seat[seat]) return `${state.names[seat]}の河はもう${n}枚です。この局の鳴き・槓の数では${lim.seat[seat]}枚までしか切れません`;
+  const total = board.seats.reduce((k, b) => k + b.river.length, 0);
+  if (total + 1 > lim.total) return `河が合わせて${total}枚です。山のツモは70回なので、これ以上は切れません（チー・ポンを入れると増えます）`;
+  return null;
+}
 /** 大きいパレットから卓へドラッグして河を作る入力（河の入力中だけ） */
 const dragOn = () => !!state.ui.dragMode && state.ui.mode === 'river';
 const fillingHaipai = () => state.ui.mode === 'hand' && state.ui.handTarget === 'haipai';
@@ -972,7 +986,7 @@ function contextHTML() {
         ${afterRiichi ? '<small>立直後はツモ切り</small>' : ''}
       </div>`}
       ${callPanelHTML()}
-      <div class="seg"><button data-act="dragmode" class="${state.ui.dragMode ? 'on' : ''}">ドラッグで置く</button>${state.ui.dragMode ? '<small>大きいパレットの牌を卓へ：右半分ならツモ切り、左半分なら手出し</small>' : ''}</div>
+      <div class="seg"><button data-act="dragmode" class="${state.ui.dragMode ? 'on' : ''}">ドラッグで置く</button>${state.ui.dragMode ? '<small>大きいパレットの牌を卓へ：右半分ならツモ切り、左半分なら手出し。家の手牌の欄に落とすと開始時の手牌に入る</small>' : ''}</div>
       <div class="seg"><button data-act="withdraw" class="${state.ui.withDraw ? 'on' : ''}">ツモも入れる</button>
         <button data-act="autoadv" class="${state.ui.autoAdvance ? 'on' : ''}">手番どおりに進める</button>
         ${cutMode(seat) ? '<button data-act="mode" data-v="meld" class="primary">副露</button>' : ''}
@@ -1132,6 +1146,8 @@ function dropRiver(t, tsumogiri) {
   const seat = state.ui.seat;
   if (remaining(t, usedCounts()) <= 0 && !(state.ui.pendingDraw && state.ui.pendingDraw.seat === seat && state.ui.pendingDraw.tile === t && !tsumogiri)) return flash(`${tileName(t)}はもう残っていません`);
   const b = state.seats[seat];
+  const full = riverFullError(seat);
+  if (full) return flash(full);
   const afterRiichi = b.river.some((r) => r.riichi);
   if (afterRiichi && !tsumogiri) return flash('立直後は手出しできません。右半分へ落としてツモ切りにしてください');
   const pd = state.ui.pendingDraw && state.ui.pendingDraw.seat === seat ? state.ui.pendingDraw.tile : undefined;
@@ -1171,6 +1187,25 @@ function dropRiver(t, tsumogiri) {
 }
 let drag = null;          // { t, x0, y0, active, ghost, zones }
 let suppressClick = false; // ドラッグの後に来る click で、タップの入力をしないように
+/** 指の下にある家の手牌の欄（その家の開始時の手牌へ入れる） */
+function dropHandSeat(x, y) {
+  // 卓は4人ぶんの層が重なっているので、指の下の要素を全部見る
+  const els = root.elementsFromPoint?.(x, y) ?? [];
+  for (const el of els) { const z = el.closest?.('.hand-zone'); if (z) return Number(z.dataset.seat); }
+  return null;
+}
+/** パレットの牌 t を、家 seat の開始時の手牌に入れる（ドラッグで手牌の欄に落としたとき） */
+function dropHand(t, seat) {
+  const arr = state.seats[seat].haipai ?? [];
+  if (arr.length >= 13) return flash(`${state.names[seat]}の手牌（開始時）はもう13枚です。差し替えるときは手牌モードで牌をタップしてから選んでください`);
+  const board = structuredClone(buildBoard());
+  (board.seats[seat].haipai ??= []).push(t);
+  if (remaining(t, usedCounts(board)) < 0) return flash(`${tileName(t)}はもう残っていません`);
+  return commit((st) => {
+    st.seats[seat].haipai = sortTiles([...(st.seats[seat].haipai ?? []), t]);
+    st.ui.flashAfter = `${st.names[seat]}の手牌（開始時）に${tileName(t)}を入れました（${st.seats[seat].haipai.length}/13）`;
+  });
+}
 function dropSide(x, y) {
   const wrap = root.querySelector('.table-wrap');
   if (!wrap) return null;
@@ -1181,6 +1216,7 @@ function dropSide(x, y) {
 function endDrag() {
   if (!drag) return;
   drag.ghost?.remove(); drag.zones?.remove();
+  root.querySelectorAll('.hand-zone.drophand').forEach((z) => z.classList.remove('drophand'));
   drag = null;
 }
 root.addEventListener('pointerdown', (ev) => {
@@ -1210,18 +1246,25 @@ root.addEventListener('pointermove', (ev) => {
   ev.preventDefault();
   drag.ghost.style.left = `${ev.clientX}px`;
   drag.ghost.style.top = `${ev.clientY}px`;
-  const side = dropSide(ev.clientX, ev.clientY);
+  const hs = dropHandSeat(ev.clientX, ev.clientY);
+  const side = hs === null ? dropSide(ev.clientX, ev.clientY) : null;
   drag.zones.classList.toggle('on-left', side === 'left');
   drag.zones.classList.toggle('on-right', side === 'right');
+  drag.zones.classList.toggle('on-hand', hs !== null);
+  root.querySelectorAll('.hand-zone.drophand').forEach((z) => { if (Number(z.dataset.seat) !== hs) z.classList.remove('drophand'); });
+  if (hs !== null) root.querySelector(`.hand-zone[data-seat="${hs}"]`)?.classList.add('drophand');
+  drag.zones.querySelector('p').textContent = hs !== null ? `${state.names[hs]}の手牌（開始時）へ` : `${state.names[state.ui.seat]}の河へ`;
 }, { signal: listeners.signal });
 root.addEventListener('pointerup', (ev) => {
   if (!drag) return;
   const { t, active } = drag;
-  const side = active ? dropSide(ev.clientX, ev.clientY) : null;
+  const hs = active ? dropHandSeat(ev.clientX, ev.clientY) : null;
+  const side = active && hs === null ? dropSide(ev.clientX, ev.clientY) : null;
   endDrag();
   if (!active) return; // 動かさなければ、ふつうのタップ（click）として扱う
   suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
-  if (side) dropRiver(t, side === 'right');
+  if (hs !== null) dropHand(t, hs);
+  else if (side) dropRiver(t, side === 'right');
 }, { signal: listeners.signal });
 root.addEventListener('pointercancel', () => endDrag(), { signal: listeners.signal });
 
@@ -1319,6 +1362,7 @@ root.addEventListener('click', (ev) => {
       const tile = Number(el.dataset.t);
       const drawn = el.dataset.drawn === '1';
       if (!drawn && state.seats[seat].river.some((r) => r.riichi)) return flash('立直後は手出しできません。ツモった牌をタップしてください');
+      { const full = riverFullError(seat); if (full) return flash(full); }
       const riichi = state.ui.riichiNext;
       state.ui.pendingDraw = null;
       state.ui.riichiNext = false;

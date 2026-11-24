@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseTenhou } from '../src/core/tenhou';
 import { logToBoard } from '../src/core/board';
-import { diagnose, expectedRiverCounts, seatCounts } from '../src/core/diagnose';
+import { diagnose, expectedRiverCounts, riverLimits, seatCounts } from '../src/core/diagnose';
 import { replayTurns } from '../src/core/board';
 import { SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL } from './fixtures';
 
@@ -292,3 +292,24 @@ function expectedAfter(board: Parameters<typeof replayTurns>[0], seat: number, m
   const d = steps.slice(i + 1).find((x) => x.kind === 'discard' && x.seat === seat);
   return d && d.kind === 'discard' ? d.river : -1;
 }
+
+describe('河の枚数の上限', () => {
+  it('実際の局はどの家も上限に収まる', () => {
+    for (const u of [SAMPLE_URL, KAN_URL, RINSHAN_URL, CHANKAN_URL]) {
+      const { board } = load(u);
+      const lim = riverLimits(board);
+      board.seats.forEach((b, s) => expect(b.river.length).toBeLessThanOrEqual(lim.seat[s]));
+      expect(board.seats.reduce((n, b) => n + b.river.length, 0)).toBeLessThanOrEqual(lim.total);
+    }
+  });
+  it('鳴きのない局で、親と南家は18枚・西家と北家は17枚まで。超えるとその家の河のエラー', () => {
+    const { board, names } = load(SAMPLE_URL);
+    board.seats.forEach((b) => { b.melds = []; b.river = []; });
+    const dealer = board.setup.kyoku % 4;
+    expect(riverLimits(board).seat.map((_, s) => riverLimits(board).seat[(dealer + s) % 4])).toEqual([18, 18, 17, 17]);
+    const west = (dealer + 2) % 4;
+    board.seats[west].river = Array.from({ length: 18 }, () => ({ tile: 41, tsumogiri: true }));
+    const issue = diagnose(board, names, { resultEntered: false }).find((i) => i.area === 'river' && i.seat === west && i.message.includes('17枚まで'));
+    expect(issue).toMatchObject({ seat: west, area: 'river', index: 17 });
+  });
+});

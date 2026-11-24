@@ -63,6 +63,9 @@ export function diagnose(board: BoardSnapshot, names: readonly string[], opts: D
     if (aka && blacks > 3) issues.push({ area: 'tiles', message: `${tileName(kindOf(red))}（赤でない五）が${blacks}枚ある（赤ありなので3枚まで）` });
   }
 
+  // 1b. 河の枚数の上限：山からのツモは嶺上牌も入れて70回。打牌はツモかチー・ポンの後にしか出ない
+  riverLimitIssues(board, nm).forEach((x) => issues.push(x));
+
   // 2. 手牌の枚数（副露1つにつき3枚減る。自摸の和了牌は別に入れる）
   seatCounts(board).forEach((c, s) => {
     if (c.haipai > 0 && c.haipai !== 13) {
@@ -395,4 +398,37 @@ function countsMatchWithout(board: BoardSnapshot, seat: Seat, index: number): bo
   b2.seats = b2.seats.map((b) => ({ ...b, melds: b.melds.map((m) => ('from' in m && m.from === seat && m.riverIndex > index ? { ...m, riverIndex: m.riverIndex - 1 } : m)) })) as BoardSnapshot['seats'];
   const want = expectedRiverCounts(b2);
   return want.every((n, s) => n === b2.seats[s].river.length);
+}
+
+/**
+ * この局で各家が切れる枚数の上限。
+ * 全体：打牌は「山からのツモ（嶺上牌も入れて70回）」か「チー・ポンの後」にしか出ないので、合計は 70＋チー・ポンの数 まで。
+ * 1人：鳴きがなければ親と南家は18回、西家・北家は17回ツモる。鳴き（誰のものでも）1回で手番の並びは1つずれ、
+ * 自分の槓1回で嶺上牌のツモが1回増えるので、そのぶんだけ上限を足す。
+ */
+export function riverLimits(board: BoardSnapshot): { total: number; seat: number[] } {
+  const dealer = board.setup.kyoku % 4;
+  let calls = 0;
+  const kans = [0, 0, 0, 0];
+  board.seats.forEach((b, s) => {
+    for (const m of b.melds) {
+      if (m.kind === 'chi' || m.kind === 'pon') calls++;
+      else if (m.kind === 'daiminkan') { calls++; kans[s]++; } else kans[s]++;
+    }
+  });
+  const chiPon = board.seats.reduce((n, b) => n + b.melds.filter((m) => m.kind === 'chi' || m.kind === 'pon').length, 0);
+  return {
+    total: 70 + chiPon,
+    seat: [0, 1, 2, 3].map((s) => ((s - dealer + 4) % 4 < 2 ? 18 : 17) + calls + kans[s]),
+  };
+}
+function riverLimitIssues(board: BoardSnapshot, nm: (s: Seat) => string): Issue[] {
+  const lim = riverLimits(board);
+  const out: Issue[] = [];
+  board.seats.forEach((b, s) => {
+    if (b.river.length > lim.seat[s]) out.push({ seat: s as Seat, area: 'river', index: lim.seat[s], message: `${nm(s as Seat)}の河が${b.river.length}枚あります。この局の鳴き・槓の数では${lim.seat[s]}枚までしか切れません` });
+  });
+  const total = board.seats.reduce((n, b) => n + b.river.length, 0);
+  if (total > lim.total) out.push({ area: 'river', message: `河が合わせて${total}枚あります。山のツモは70回なので、チー・ポンの数を足しても${lim.total}枚までです` });
+  return out;
 }

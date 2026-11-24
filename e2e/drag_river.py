@@ -15,6 +15,15 @@ async def drag(pg, t, side, release=True):
     ghost = await pg.evaluate(f"() => !!{sr}.querySelector('.dragghost')")
     if release: await pg.mouse.up()
     return zones, ghost
+async def drag_to(pg, t, sel):
+    await pg.evaluate(f"() => window.scrollBy(0, {sr}.querySelector('.table-wrap').getBoundingClientRect().top - 70)")
+    pal = await pg.evaluate(f"() => {{ const r = {sr}.querySelector('.palette.big [data-act=pal][data-t=\"{t}\"]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }}")
+    x, y = await pg.evaluate(f"() => {{ const r = {sr}.querySelector('{sel}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }}")
+    await pg.mouse.move(*pal); await pg.mouse.down()
+    for k in range(1, 6): await pg.mouse.move(pal[0] + (x - pal[0]) * k / 5, pal[1] + (y - pal[1]) * k / 5)
+    hl = await pg.evaluate(f"() => [{sr}.querySelector('.dropzones p')?.textContent, !!{sr}.querySelector('.hand-zone.drophand')]")
+    await pg.mouse.up()
+    return hl
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(); pg = await b.new_page(viewport={'width': 390, 'height': 844})
@@ -55,6 +64,25 @@ async def main():
         s4 = await st(); r4 = s4['seats'][nxt]['river']
         ok3 = (r3 == [{'tile': 47, 'tsumogiri': True, 'draw': 47}] and s3['ui']['seat'] == nxt and 'ツモ牌を選んで' in f4a
                and r4 == [{'tile': h, 'tsumogiri': False, 'draw': 11}])
+        # 4. 手牌の欄に落とすと、その家の開始時の手牌に入る
+        await pg.evaluate("() => { const d = window.api.getData(); d.seats.forEach((b) => { b.haipai = []; b.river = []; b.melds = []; }); window.api.setData(d); }")
+        await pg.click('[data-act=pickseat][data-v="1"]')
+        if not await pg.locator('[data-act=dragmode].on').count(): await pg.click('[data-act=dragmode]')
+        await pg.wait_for_timeout(700)   # 卓が回り終わるまで待つ
+        hl = await drag_to(pg, 19, '.hand-zone[data-seat="1"]')
+        s5 = await st(); f5 = await fl()
+        ok4 = s5['seats'][1]['haipai'] == [19] and s5['seats'][1]['river'] == [] and hl[1] and '手牌（開始時）へ' in (hl[0] or '') and '1/13' in f5
+        # 5. 河の上限：鳴きのない局で南家は18枚まで
+        await pg.evaluate("() => { const d = window.api.getData(); d.seats[1].haipai = []; d.seats[1].river = Array.from({ length: 18 }, () => ({ tile: 41, tsumogiri: true })); window.api.setData(d); }")
+        await pg.click('[data-act=pickseat][data-v="1"]')
+        if not await pg.locator('[data-act=dragmode].on').count(): await pg.click('[data-act=dragmode]')
+        await drag(pg, 42, 'right'); f6 = await fl()
+        n6 = len((await st())['seats'][1]['river'])
+        await pg.evaluate("() => { const d = window.api.getData(); d.seats[1].river.push({ tile: 42, tsumogiri: true }); window.api.setData(d); }")
+        iss = await pg.evaluate(f"() => {sr}.querySelector('div.issues')?.innerText ?? ''")
+        ok5 = n6 == 18 and '枚までしか切れません' in f6 and '19枚あります' in iss
+        ok3 = ok3 and ok4 and ok5
+        print(json.dumps({'ok4': ok4, 'ok5': ok5, 'f5': f5, 'f6': f6, 'hl': hl}, ensure_ascii=False))
         print(json.dumps({'ok': ok1 and ok2 and ok3 and not errs, 'ok1': ok1, 'ok2': ok2, 'ok3': ok3, 'river1': r, 'r3': r3, 'r4': r4, 'f4a': f4a, 'errors': errs}, ensure_ascii=False))
         await b.close()
 asyncio.run(main())
