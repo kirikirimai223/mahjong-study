@@ -942,13 +942,16 @@ function haipaiSlotRemaining(t) {
   if (selectedHand && selectedHand.seat === seat) arr[selectedHand.idx] = t; else arr.push(t);
   return remaining(t, usedCounts(board)) + 1;
 }
+/** 大きいパレットから卓へドラッグして河を作る入力（河の入力中だけ） */
+const dragOn = () => !!state.ui.dragMode && state.ui.mode === 'river';
 const fillingHaipai = () => state.ui.mode === 'hand' && state.ui.handTarget === 'haipai';
 const fillingDraw = () => state.ui.mode === 'river' && state.ui.riverInsert === 'draw' && state.ui.selected;
 function paletteHTML() {
   const c = usedCounts();
   const drawSlot = fillingDraw();
   const haipaiSlot = !drawSlot && fillingHaipai();
-  return `<div class="palette">${PALETTE.map((row) => `<div class="prow">${row.filter((t) => akaOn() || !isRed(t)).map((t) => {
+  const big = dragOn();
+  return `<div class="palette ${big ? 'big' : ''}">${PALETTE.map((row) => `<div class="prow">${row.filter((t) => akaOn() || !isRed(t)).map((t) => {
     const n = drawSlot ? drawSlotRemaining(t) : haipaiSlot ? haipaiSlotRemaining(t) : remaining(t, c);
     return `<button class="pt ${n <= 0 ? 'none-left' : ''}" data-act="pal" data-t="${t}" ${n <= 0 ? 'disabled' : ''}>${tileHTML(t)}<i>${n}</i></button>`;
   }).join('')}</div>`).join('')}</div>`;
@@ -969,6 +972,7 @@ function contextHTML() {
         ${afterRiichi ? '<small>立直後はツモ切り</small>' : ''}
       </div>`}
       ${callPanelHTML()}
+      <div class="seg"><button data-act="dragmode" class="${state.ui.dragMode ? 'on' : ''}">ドラッグで置く</button>${state.ui.dragMode ? '<small>大きいパレットの牌を卓へ：右半分ならツモ切り、左半分なら手出し</small>' : ''}</div>
       <div class="seg"><button data-act="withdraw" class="${state.ui.withDraw ? 'on' : ''}">ツモも入れる</button>
         <button data-act="autoadv" class="${state.ui.autoAdvance ? 'on' : ''}">手番どおりに進める</button>
         ${cutMode(seat) ? '<button data-act="mode" data-v="meld" class="primary">副露</button>' : ''}
@@ -1116,13 +1120,114 @@ function render() {
     ${!resultEntered ? '<p class="hint gohint">結果（和了／流局）を入力すると出力できます。入力途中の河の枚数差はエラーにしません</p>' : ''}
     <button class="go" data-act="build" ${currentIssues.some((i) => i.level !== 'warn') || !resultEntered ? 'disabled' : ''}>天鳳形式で出力<small>未入力の配牌・ツモはランダムで補います</small></button>
     ${outputHTML()}
-    ${flashMsg ? `<div class="flash">${flashMsg}</div>` : ''}`;
+    ${flashMsg ? `<div class="flash ${dragOn() ? 'top' : ''}">${flashMsg}</div>` : ''}`;
+  root.getElementById('dock').classList.toggle('bigpal', dragOn());
   const det = root.querySelector('details.setup');
   if (det) det.addEventListener('toggle', () => { state.ui.setupOpen = det.open; });
 }
 
+// ---------- ドラッグで河に置く ----------
+/** パレットの牌 t を、今の家の河に置く。tsumogiri：右半分に落としたら true（ツモ切り）、左半分なら false（手出し） */
+function dropRiver(t, tsumogiri) {
+  const seat = state.ui.seat;
+  if (remaining(t, usedCounts()) <= 0 && !(state.ui.pendingDraw && state.ui.pendingDraw.seat === seat && state.ui.pendingDraw.tile === t && !tsumogiri)) return flash(`${tileName(t)}はもう残っていません`);
+  const b = state.seats[seat];
+  const afterRiichi = b.river.some((r) => r.riichi);
+  if (afterRiichi && !tsumogiri) return flash('立直後は手出しできません。右半分へ落としてツモ切りにしてください');
+  const pd = state.ui.pendingDraw && state.ui.pendingDraw.seat === seat ? state.ui.pendingDraw.tile : undefined;
+  const riichi = !!state.ui.riichiNext && !afterRiichi;
+  const name = state.names[seat];
+  if (cutMode(seat)) {
+    // 開始時の手牌がある家：ツモ切りは「その牌をツモって切る」、手出しは「手牌からその牌を切る」
+    if (tsumogiri && !expectsDraw(seat)) return flash('鳴いた直後なのでツモはありません。手牌から切る牌を左半分へ落としてください');
+    if (!tsumogiri) {
+      if (pd === undefined && expectsDraw(seat)) return flash('手出しの前に、パレットをタップしてツモ牌を選んでください');
+      const inHand = shownHand(seat).tiles.some((x) => x === t) || pd === t;
+      if (!inHand) return flash(`${tileName(t)}は${name}の手牌にありません`);
+    }
+    state.ui.pendingDraw = null; state.ui.riichiNext = false;
+    return commit((st) => {
+      const rt = { tile: t, tsumogiri };
+      const draw = tsumogiri ? t : pd;
+      if (draw !== undefined) rt.draw = draw;
+      if (riichi) rt.riichi = true;
+      st.seats[seat].river.push(rt);
+      st.ui.selected = null; st.ui.riverInsert = null;
+      st.ui.callWindow = { from: seat, idx: st.seats[seat].river.length - 1 };
+      if (st.ui.autoAdvance) st.ui.seat = (seat + 1) % 4;
+      st.ui.flashAfter = `${name}：${tileName(t)}を${tsumogiri ? 'ツモ切り' : '手出し'}`;
+    });
+  }
+  // 河だけ記録する家：その家の河の最後に足す（家は動かさない）
+  state.ui.pendingDraw = null; state.ui.riichiNext = false;
+  return commit((st) => {
+    const rt = { tile: t, tsumogiri };
+    if (st.ui.withDraw && tsumogiri) rt.draw = t; else if (pd !== undefined) rt.draw = pd;
+    if (riichi) rt.riichi = true;
+    st.seats[seat].river.push(rt);
+    st.ui.selected = { seat, idx: st.seats[seat].river.length - 1 }; st.ui.riverInsert = null; st.ui.callWindow = null;
+    st.ui.flashAfter = `${name}の${st.seats[seat].river.length}打目：${tileName(t)}を${tsumogiri ? 'ツモ切り' : '手出し'}`;
+  });
+}
+let drag = null;          // { t, x0, y0, active, ghost, zones }
+let suppressClick = false; // ドラッグの後に来る click で、タップの入力をしないように
+function dropSide(x, y) {
+  const wrap = root.querySelector('.table-wrap');
+  if (!wrap) return null;
+  const r = wrap.getBoundingClientRect();
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
+  return x >= r.left + r.width / 2 ? 'right' : 'left';
+}
+function endDrag() {
+  if (!drag) return;
+  drag.ghost?.remove(); drag.zones?.remove();
+  drag = null;
+}
+root.addEventListener('pointerdown', (ev) => {
+  suppressClick = false;
+  if (!dragOn() || ev.button > 0) return;
+  const pt = ev.target.closest?.('.palette.big .pt');
+  if (!pt || pt.disabled) return;
+  drag = { t: Number(pt.dataset.t), x0: ev.clientX, y0: ev.clientY, active: false };
+  try { pt.setPointerCapture(ev.pointerId); } catch { /* 取れない環境でも root で拾える */ }
+}, { signal: listeners.signal });
+root.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  if (!drag.active) {
+    if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 8) return;
+    drag.active = true;
+    const g = document.createElement('div');
+    g.className = 'dragghost';
+    g.innerHTML = tileHTML(drag.t);
+    root.getElementById('app').appendChild(g);
+    drag.ghost = g;
+    const z = document.createElement('div');
+    z.className = 'dropzones';
+    z.innerHTML = `<div class="dz left"><b>手出し</b></div><div class="dz right"><b>ツモ切り</b></div><p>${state.names[state.ui.seat]}の河へ</p>`;
+    root.querySelector('.table-wrap').appendChild(z);
+    drag.zones = z;
+  }
+  ev.preventDefault();
+  drag.ghost.style.left = `${ev.clientX}px`;
+  drag.ghost.style.top = `${ev.clientY}px`;
+  const side = dropSide(ev.clientX, ev.clientY);
+  drag.zones.classList.toggle('on-left', side === 'left');
+  drag.zones.classList.toggle('on-right', side === 'right');
+}, { signal: listeners.signal });
+root.addEventListener('pointerup', (ev) => {
+  if (!drag) return;
+  const { t, active } = drag;
+  const side = active ? dropSide(ev.clientX, ev.clientY) : null;
+  endDrag();
+  if (!active) return; // 動かさなければ、ふつうのタップ（click）として扱う
+  suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
+  if (side) dropRiver(t, side === 'right');
+}, { signal: listeners.signal });
+root.addEventListener('pointercancel', () => endDrag(), { signal: listeners.signal });
+
 // ---------- イベント ----------
 root.addEventListener('click', (ev) => {
+  if (suppressClick) { suppressClick = false; ev.stopPropagation(); return; }
   const el = ev.target.closest('[data-act]');
   if (!el) return;
   const a = el.dataset.act;
@@ -1244,6 +1349,13 @@ root.addEventListener('click', (ev) => {
       return flash(`${state.names[seat]}の${i + 1}打目の前にツモった牌を、パレットで選んでください${turns.river.length > 1 ? `（抜けは${turns.river.length}か所）` : ''}`);
     }
     case 'riichinext': state.ui.riichiNext = !state.ui.riichiNext; return render();
+    case 'dragmode': {
+      state.ui.dragMode = !state.ui.dragMode;
+      render();
+      // 卓が見える位置まで動かす（下には大きいパレットが出る）
+      if (state.ui.dragMode) { const w = root.querySelector('.table-wrap'); if (w) window.scrollBy({ top: w.getBoundingClientRect().top - 70, behavior: 'smooth' }); }
+      return;
+    }
     case 'autoadv': state.ui.autoAdvance = !state.ui.autoAdvance; return render();
     case 'clearpick': state.ui.pick = null; return render();
     case 'meldreset': state.ui.pick = null; state.ui.meldTarget = null; state.ui.pendingOwn = []; state.ui.meldPending = null; state.ui.afterPick = null; state.ui.extFrom = null; return render();

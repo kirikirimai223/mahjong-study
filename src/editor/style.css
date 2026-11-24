@@ -161,3 +161,20 @@ button.big { font-size: 15px; padding: 8px 16px; font-weight: 700; }
 .tile.nextaftercall { outline: 2px dashed #7c3aed; outline-offset: 1px; }
 .tile.nextaftercall::after { content: '後'; position: absolute; top: -5px; left: -4px; z-index: 2; font-size: 8px; line-height: 1; padding: 1px 2px; border-radius: 3px; background: #a78bfa; color: #fff; font-weight: 700; }
 .hint.aftercallnote { color: #6d28d9; }
+/* ドラッグで河に置く：大きいパレット（画面の下に固定）と、卓の左右の落とし先 */
+#dock.bigpal { padding-bottom: calc(var(--bigpal-h, 250px) + 12px); }
+.palette.big { --tw: min(40px, calc((100vw - 74px) / 10)); position:fixed; left:0; right:0; bottom:0; z-index:8; margin:0; padding:8px 10px calc(8px + env(safe-area-inset-bottom)); background:rgba(244,241,234,.97); border-top:1px solid var(--line); box-shadow:0 -4px 14px rgba(0,0,0,.12); gap:6px; }
+.palette.big .prow { gap:5px; justify-content:center; }
+.palette.big .pt { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+.palette.big .pt i { font-size:10px; }
+.flash.top { top:calc(10px + env(safe-area-inset-top)); bottom:auto; }
+.dragghost { position:fixed; z-index:20; pointer-events:none; --tw: 34px; transform:translate(-50%, -115%) scale(1.15); filter:drop-shadow(0 4px 6px rgba(0,0,0,.35)); }
+.table-wrap { position:relative; }
+.dropzones { position:absolute; inset:0; z-index:6; display:flex; pointer-events:none; border-radius:12px; overflow:hidden; }
+.dropzones .dz { flex:1; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,.08); border:2px dashed rgba(255,255,255,.45); }
+.dropzones .dz b { color:#fff; font-size:18px; text-shadow:0 1px 3px rgba(0,0,0,.6); background:rgba(0,0,0,.25); padding:4px 10px; border-radius:6px; }
+.dropzones .dz.left { border-right-width:1px; }
+.dropzones .dz.right { border-left-width:1px; }
+.dropzones.on-left .dz.left { background:rgba(59,130,246,.35); border-color:#fff; }
+.dropzones.on-right .dz.right { background:rgba(234,88,12,.35); border-color:#fff; }
+.dropzones p { position:absolute; left:0; right:0; top:6px; margin:0; text-align:center; color:#fff; font-size:12px; text-shadow:0 1px 2px rgba(0,0,0,.6); }
