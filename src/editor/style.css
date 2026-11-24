@@ -156,7 +156,7 @@ button.danger { color:var(--bad); }
 .tile.drawn.cuttable { position: relative; }
 .tile.drawn.cuttable::before { content: ''; position: absolute; inset: -10px -14px -10px -8px; }
 button.big { font-size: 15px; padding: 8px 16px; font-weight: 700; }
-.meldnote { color: #dfeee6; font-size: 11px; align-self: center; }
+.meldnote { position:absolute; left:0; bottom:100%; margin-bottom:2px; white-space:nowrap; color: #dfeee6; font-size: 10px; line-height:1.2; background:rgba(0,0,0,.25); padding:1px 4px; border-radius:3px; pointer-events:none; }
 /* 前の巡の牌に鳴くとき、鳴いた後の打牌になる牌 */
 .tile.nextaftercall { outline: 2px dashed #7c3aed; outline-offset: 1px; }
 .tile.nextaftercall::after { content: '後'; position: absolute; top: -5px; left: -4px; z-index: 2; font-size: 8px; line-height: 1; padding: 1px 2px; border-radius: 3px; background: #a78bfa; color: #fff; font-weight: 700; }

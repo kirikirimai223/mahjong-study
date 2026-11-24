@@ -163,7 +163,7 @@ function meldKind(called, own, from, seat) {
 // ---------- 操作 ----------
 function tapPalette(t) {
   const c = usedCounts();
-  if ((fillingDraw() ? drawSlotRemaining(t) : remaining(t, c)) <= 0) return flash(`${tileName(t)}はもう残っていません`);
+  if ((fillingDraw() ? drawSlotRemaining(t) : fillingHaipai() ? haipaiSlotRemaining(t) : remaining(t, c)) <= 0) return flash(`${tileName(t)}はもう残っていません`);
   const { seat, mode } = state.ui;
   if (mode === 'hand' && !state.ui.selectedHand) {
     const target = state.ui.handTarget;
@@ -871,7 +871,7 @@ function handRow(s) {
     ? `<span class="gap"></span>${tileHTML(state.ui.pendingDraw.tile, `drawn ${cutting ? 'cuttable' : ''} ${pick.includes('d') ? 'picked' : ''}`, cutting ? `data-act="${meldPick(s) ? 'mpick' : 'cut'}" data-seat="${s}" data-t="${state.ui.pendingDraw.tile}" data-drawn="1" data-key="d"` : '')}`
     : cutting && cutMode(s) && expectsDraw(s) ? '<span class="gap"></span><span class="tile ghost small"><span class="face">ツモ</span></span>' : '';
   if (pdTile) return `${hand}${empty}${pdTile}<span class="gap"></span>${melds}`;
-  if (shown.kind === 'haipai' && b.melds.length) return `${hand}${empty}<span class="gap"></span><small class="meldnote">局の開始時の手牌（副露は表示しません）</small>`;
+  if (shown.kind === 'haipai' && b.melds.length) return `${hand}${empty}<small class="meldnote">局の開始時の手牌（副露は表示しません）</small>`;
   if (shown.tiles.length === 0 && !empty && b.melds.length === 0) return `<span class="placeholder wide">${b.hand.length === 0 && (b.haipai ?? []).length === 0 ? '手牌' : ''}</span>`;
   return `${hand}${empty}<span class="gap"></span>${melds}`;
 }
@@ -931,12 +931,25 @@ function drawSlotRemaining(t) {
   board.seats[sel.seat].river[sel.idx].draw = t;
   return remaining(t, usedCounts(board)) + 1;
 }
+/**
+ * 開始時の手牌を入れ直しているとき：副露に使った牌や手出しした牌は、もともと手牌にあった牌なので、
+ * 開始時の手牌に入れても全体の枚数は増えない。その牌もパレットで選べるように、入れたと仮定して数える。
+ */
+function haipaiSlotRemaining(t) {
+  const { seat, selectedHand } = state.ui;
+  const board = structuredClone(buildBoard());
+  const arr = board.seats[seat].haipai ?? (board.seats[seat].haipai = []);
+  if (selectedHand && selectedHand.seat === seat) arr[selectedHand.idx] = t; else arr.push(t);
+  return remaining(t, usedCounts(board)) + 1;
+}
+const fillingHaipai = () => state.ui.mode === 'hand' && state.ui.handTarget === 'haipai';
 const fillingDraw = () => state.ui.mode === 'river' && state.ui.riverInsert === 'draw' && state.ui.selected;
 function paletteHTML() {
   const c = usedCounts();
   const drawSlot = fillingDraw();
+  const haipaiSlot = !drawSlot && fillingHaipai();
   return `<div class="palette">${PALETTE.map((row) => `<div class="prow">${row.filter((t) => akaOn() || !isRed(t)).map((t) => {
-    const n = drawSlot ? drawSlotRemaining(t) : remaining(t, c);
+    const n = drawSlot ? drawSlotRemaining(t) : haipaiSlot ? haipaiSlotRemaining(t) : remaining(t, c);
     return `<button class="pt ${n <= 0 ? 'none-left' : ''}" data-act="pal" data-t="${t}" ${n <= 0 ? 'disabled' : ''}>${tileHTML(t)}<i>${n}</i></button>`;
   }).join('')}</div>`).join('')}</div>`;
 }
