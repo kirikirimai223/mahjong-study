@@ -7,6 +7,7 @@ import {
 } from '../lib/data';
 import { useConfirm } from '../lib/useConfirm';
 import { importProtoRecords } from '../lib/importProto';
+import { loadSources, saveImported } from '../lib/importTenhou';
 import { fmtDate } from './Sessions';
 
 export function SessionDetail() {
@@ -74,6 +75,7 @@ export function SessionDetail() {
           {adding
             ? <NewGame session={s} count={games.length} onCancel={() => setAdding(false)} />
             : <button className="primary wide" onClick={() => setAdding(true)}>新しい半荘</button>}
+          {s && <ImportPaifu sessionId={s.id} onDone={(m) => { flash(m); load(); }} />}
           <details className="import">
             <summary>試作の記録を取り込む</summary>
             <p className="quiet small">試作の牌譜エディタで「記録」→「記録をすべて書き出す」で保存したファイルを選ぶと、その半荘と局をこの勉強会に入れます。</p>
@@ -274,5 +276,37 @@ function EditGame({ game, onSaved }: { game: Game; onSaved: () => void }) {
       <button className="primary">保存</button>
       {err && <p className="bad">{err}</p>}
     </form>
+  );
+}
+
+/** 既にある牌譜（天鳳牌譜エディタのURL・JSON、NAGAのレポート、天鳳の対局URL）を取り込む */
+function ImportPaifu({ sessionId, onDone }: { sessionId: string; onDone: (msg: string) => void }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function run() {
+    setBusy(true); setErr('');
+    try {
+      const games = await loadSources(text);
+      if (!games.length) throw new Error('取り込む牌譜がありません');
+      const n = await saveImported(sessionId, games);
+      setText('');
+      onDone(`半荘${n.games}つ・${n.rounds}局を取り込みました${n.naga ? `（NAGAの結果${n.naga}局ぶんも）` : ''}`);
+    } catch (e) { setErr(errorText(e)); }
+    setBusy(false);
+  }
+  return (
+    <details className="import">
+      <summary>既にある牌譜を取り込む</summary>
+      <p className="quiet small">次のどれかを貼ってください（1行に1つ、何行でも）。天鳳牌譜エディタの局は、同じ4人なら1つの半荘にまとめます。</p>
+      <ul className="quiet small">
+        <li>天鳳牌譜エディタのURL（https://tenhou.net/6/#json=…）や、そのJSON</li>
+        <li>NAGAの解析レポートのURL（牌譜と解析結果をまとめて取り込みます）</li>
+        <li>天鳳の対局のURL（https://tenhou.net/0/?log=…）</li>
+      </ul>
+      <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="https://tenhou.net/6/#json=… など" />
+      <button className="primary" disabled={busy || !text.trim()} onClick={run}>{busy ? '取り込んでいます…' : '取り込む'}</button>
+      {err && <p className="bad small">{err}</p>}
+    </details>
   );
 }
