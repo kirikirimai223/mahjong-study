@@ -4,7 +4,7 @@
 // 中身：mjai_log（対局の Mjai の出来事）、split_logs（局ごとの天鳳形式の牌譜）、review.kyokus[].entries（解析した家の判断ごとの評価）
 import type { NagaCall, NagaDecision, NagaKyoku, NagaSummary } from './naga';
 
-type Action = { type: string; actor?: number; target?: number; pai?: string; consumed?: string[]; tsumogiri?: boolean };
+export type Action = { type: string; actor?: number; target?: number; pai?: string; consumed?: string[]; tsumogiri?: boolean };
 type Entry = {
   last_actor: number; tile: string;
   at_self_chi_pon?: boolean; at_self_riichi?: boolean; at_opponent_kakan?: boolean;
@@ -27,11 +27,11 @@ export function gokujanId(url: string): string | null {
   return m ? m[1] : null;
 }
 
-const plain = (p: string) => p.replace(/r$/, '');
-const round3 = (p: number) => Math.round(p * 1000) / 1000;
+export const plain = (p: string) => p.replace(/r$/, '');
+export const round3 = (p: number) => Math.round(p * 1000) / 1000;
 
 /** チーの形：鳴いた牌が順子のいちばん下・真ん中・上のどれか */
-function chiKind(pai: string, consumed: string[]) {
+export function chiKind(pai: string, consumed: string[]) {
   const n = Number(pai[0]);
   const ns = consumed.map((c) => Number(c[0]));
   if (n < Math.min(...ns)) return 'chi_low';
@@ -39,7 +39,7 @@ function chiKind(pai: string, consumed: string[]) {
   return 'chi_mid';
 }
 /** 鳴き・ロンの選択の名前（NAGAの名前に合わせる） */
-function callName(a: Action): string | null {
+export function callName(a: Action): string | null {
   if (a.type === 'none') return 'skip';
   if (a.type === 'chi') return chiKind(a.pai ?? '', a.consumed ?? []);
   if (a.type === 'pon' || a.type === 'daiminkan') return a.type;

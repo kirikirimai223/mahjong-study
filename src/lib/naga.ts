@@ -213,12 +213,9 @@ export function tileToMjai(t: number): string {
  */
 export async function attachNagaToRounds(reportUrl: string, rounds: { id: string; kyoku: number; honba: number }[]) {
   const { supabase } = await import('./supabase');
-  const { extractGokujan, fetchGokujan, gokujanId } = await import('./gokujan');
-  const gid = gokujanId(reportUrl);
-  const rid = gid ? `gokujan:${gid}` : nagaReportId(reportUrl);
-  if (!rid) throw new Error('NAGAのレポート（report_id の入ったURL）か、極雀の解析結果（https://gokujan.com/review/…）のURLを貼ってください');
-  const engine = gid ? 'mortal' : 'naga';
-  const sum = gid ? extractGokujan(await fetchGokujan(gid), gid) : extractNaga(await fetchNagaReport(rid), rid);
+  const { loadAnalysis } = await import('./analysis');
+  const { engine, summary: sum } = await loadAnalysis(reportUrl);
+  const rid = sum.reportId;
   let attached = 0;
   const unmatched: string[] = [];
   for (const k of sum.kyokus) {

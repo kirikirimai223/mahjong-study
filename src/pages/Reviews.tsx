@@ -1,15 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { errorText, supabase } from '../lib/supabase';
 import { useConfirm } from '../lib/useConfirm';
-import { decisionMisses, extractNaga, fetchNagaReport, nagaReportId, type NagaKyoku, type NagaSummary } from '../lib/naga';
-import { extractGokujan, fetchGokujan, gokujanId } from '../lib/gokujan';
+import { decisionMisses, type NagaKyoku, type NagaSummary } from '../lib/naga';
+import { analysisOf, loadAnalysis } from '../lib/analysis';
 
 type Review = { id: string; engine: 'naga' | 'mortal' | 'other'; report_url: string; note: string; created_at: string; naga: StoredNaga | null };
 /** 取り込んだNAGAの結果（この局の分だけ） */
 export type StoredNaga = { reportId: string; types: string[]; kyoku: NagaKyoku; fetchedAt: string };
-const ENGINE = { naga: 'NAGA', mortal: 'Mortal・極雀', other: 'その他' } as const;
+const ENGINE = { naga: 'NAGA', mortal: 'Mortal・極雀', other: 'Miai・その他' } as const;
 /** 結果を取り込めるレポートか（NAGA・極雀） */
-const importable = (u: string) => !!(nagaReportId(u) || gokujanId(u));
+const importable = (u: string) => !!analysisOf(u);
 const NAGA_SITE = 'https://naga.dmv.nico/naga_report/order_form/';
 const MORTAL_SITE = 'https://mjai.ekyu.moe/ja.html';
 const GOKUJAN_SITE = 'https://gokujan.com/';
@@ -35,7 +35,7 @@ export function Reviews({ roundId, kyoku, honba, copyUrl }: { roundId: string; k
     e.preventDefault();
     const u = url.trim();
     if (!/^https?:\/\//.test(u)) return setMsg('レポートのURL（https://…）を貼ってください');
-    const eng = gokujanId(u) ? 'mortal' : nagaReportId(u) ? 'naga' : engine;
+    const eng = analysisOf(u)?.engine ?? engine;
     const { data, error } = await supabase.from('study_ai_reviews').insert({ round_id: roundId, engine: eng, report_url: u, note: note.trim() }).select('id').single();
     if (error) return setMsg(errorText(error));
     setUrl(''); setNote(''); setMsg('');
@@ -44,12 +44,11 @@ export function Reviews({ roundId, kyoku, honba, copyUrl }: { roundId: string; k
   }
   /** NAGAのレポート・極雀の解析結果を読み、この局の打牌ごとの推奨を取り込む */
   async function importNaga(id: string, reportUrl: string) {
-    const gid = gokujanId(reportUrl);
-    const rid = gid ? `gokujan:${gid}` : nagaReportId(reportUrl);
-    if (!rid) return setMsg('レポートのURLに report_id がありません。解析一覧から開いたレポートのURLを貼ってください');
+    if (!analysisOf(reportUrl)) return setMsg('取り込めるのは、NAGAのレポート・極雀・Miaiの解析結果のURLです');
     setBusy(id); setMsg('解析結果を読み込んでいます…');
     try {
-      const sum: NagaSummary = gid ? extractGokujan(await fetchGokujan(gid), gid) : extractNaga(await fetchNagaReport(rid), rid);
+      const sum: NagaSummary = (await loadAnalysis(reportUrl)).summary;
+      const rid = sum.reportId;
       const k = sum.kyokus.find((x) => x.kyoku === kyoku && x.honba === honba) ?? (sum.kyokus.length === 1 ? sum.kyokus[0] : undefined);
       if (!k) throw new Error(`このレポートに${kyokuLabel(kyoku, honba)}がありません（${sum.kyokus.map((x) => kyokuLabel(x.kyoku, x.honba)).join('・')}）`);
       const stored: StoredNaga = { reportId: rid, types: sum.types, kyoku: k, fetchedAt: new Date().toISOString() };
@@ -72,8 +71,8 @@ export function Reviews({ roundId, kyoku, honba, copyUrl }: { roundId: string; k
     <div className="reviews card stack">
       <div className="steps">
         <span>① <button className="link" onClick={async () => setMsg((await copyUrl()) ?? 'URLをコピーしました。解析サイトに貼ってください')}>この局のURLをコピー</button></span>
-        <span>② <a href={NAGA_SITE} target="_blank" rel="noopener">NAGA</a>の「カスタム牌譜解析」に貼って解析（<a href={MORTAL_SITE} target="_blank" rel="noopener">Mortal</a>・<a href={GOKUJAN_SITE} target="_blank" rel="noopener">極雀</a>でも可）</span>
-        <span>③ 解析一覧からレポートを開き、そのURLを下に貼る（NAGA・極雀なら結果を取り込み、振り返りで推奨打牌と並べます）</span>
+        <span>② <a href={NAGA_SITE} target="_blank" rel="noopener">NAGA</a>の「カスタム牌譜解析」に貼って解析（<a href={MORTAL_SITE} target="_blank" rel="noopener">Mortal</a>・<a href={GOKUJAN_SITE} target="_blank" rel="noopener">極雀</a>・<a href="https://riichi.miai.moe/" target="_blank" rel="noopener">Miai</a>でも可）</span>
+        <span>③ 解析一覧からレポートを開き、そのURLを下に貼る（NAGA・極雀・Miaiなら結果を取り込み、振り返りで推奨打牌と並べます）</span>
       </div>
       {rows.length > 0 && (
         <ul className="list">
@@ -93,7 +92,7 @@ export function Reviews({ roundId, kyoku, honba, copyUrl }: { roundId: string; k
       <form className="stack" onSubmit={add}>
         <div className="row">
           <select value={engine} onChange={(e) => setEngine(e.target.value as Review['engine'])} style={{ width: 'auto' }}>
-            <option value="naga">NAGA</option><option value="mortal">Mortal・極雀</option><option value="other">その他</option>
+            <option value="naga">NAGA</option><option value="mortal">Mortal・極雀</option><option value="other">Miai・その他</option>
           </select>
           <input className="grow" type="url" placeholder="レポートのURL" value={url} onChange={(e) => setUrl(e.target.value)} />
         </div>

@@ -191,7 +191,7 @@ export function ReviewPage() {
             view={viewOf(cur)} naga={nagaOf.get(posKey(cur.seat, cur.discardIndex))} nagaType={nagaType} />
           {!naga && (
             <details className="card naga-none" open={!!nagaMsg}>
-              <summary><b>AIの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてNAGA・極雀のURLを貼る）</small></summary>
+              <summary><b>AIの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてNAGA・極雀・MiaiのURLを貼る）</small></summary>
               <NagaImport rounds={gameRounds.length ? gameRounds : [{ id: id!, kyoku: round!.kyoku, honba: round!.honba }]} onDone={(m) => { setNagaMsg(m); loadNaga(); }} />
               {nagaMsg && <p className="small">{nagaMsg}</p>}
             </details>

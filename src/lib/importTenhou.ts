@@ -6,15 +6,16 @@ import { roundLabelOf } from './data';
 import { extractNaga, fetchNagaReport, nagaReportId, type NagaSummary } from './naga';
 import type { StoredNaga } from '../pages/Reviews';
 import { extractGokujan, fetchGokujan, gokujanId, gokujanTenhou } from './gokujan';
+import { extractMiai, fetchMiai, miaiId, miaiTenhou } from './miai';
 
 type TenhouJson = { title?: unknown; name: string[]; rule: { disp: string; aka: number; aka51?: number; aka52?: number; aka53?: number }; log: unknown[][] };
 /** 取り込む1つの対局（半荘）。naga があれば、各局にNAGAの結果も付ける */
-export type ImportGame = { name: string; json: TenhouJson; naga?: NagaSummary; reportUrl?: string; engine?: 'naga' | 'mortal' };
+export type ImportGame = { name: string; json: TenhouJson; naga?: NagaSummary; reportUrl?: string; engine?: 'naga' | 'mortal' | 'other' };
 
 const TENHOU_LOG = /(?:log=)?(\d{10}gm-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{8})/;
 
 /** 貼られた文字から、取り込む元を読み取る（1行に1つ。JSONはまとめて1つ） */
-export function parseSources(text: string): ({ kind: 'json'; json: TenhouJson } | { kind: 'naga'; reportId: string; url: string } | { kind: 'gokujan'; id: string; url: string } | { kind: 'tenhou'; logId: string })[] {
+export function parseSources(text: string): ({ kind: 'json'; json: TenhouJson } | { kind: 'naga'; reportId: string; url: string } | { kind: 'gokujan'; id: string; url: string } | { kind: 'miai'; id: string; url: string } | { kind: 'tenhou'; logId: string })[] {
   const t = text.trim();
   if (!t) return [];
   if (t.startsWith('{')) return [{ kind: 'json', json: checkJson(JSON.parse(t)) }];
@@ -25,6 +26,7 @@ export function parseSources(text: string): ({ kind: 'json'; json: TenhouJson } 
       out.push({ kind: 'json', json: checkJson(JSON.parse(raw)) });
     } else if (nagaReportId(line)) out.push({ kind: 'naga', reportId: nagaReportId(line)!, url: line });
     else if (gokujanId(line)) out.push({ kind: 'gokujan', id: gokujanId(line)!, url: line });
+    else if (miaiId(line)) out.push({ kind: 'miai', id: miaiId(line)!, url: line });
     else if (TENHOU_LOG.test(line)) out.push({ kind: 'tenhou', logId: TENHOU_LOG.exec(line)![1] });
     else throw new Error(`読めない行があります：${line.slice(0, 60)}`);
   }
@@ -54,6 +56,9 @@ export async function loadSources(text: string): Promise<ImportGame[]> {
       } else if (report.haihu_id) json = await fetchTenhouLog(report.haihu_id);
       else throw new Error('このレポートには牌譜が入っていません');
       games.push({ name: 'NAGAで解析した牌譜', json, naga: extractNaga(report as never, src.reportId), reportUrl: src.url });
+    } else if (src.kind === 'miai') {
+      const res = await fetchMiai(src.id);
+      games.push({ name: 'Miaiで解析した牌譜', json: miaiTenhou(res.review), naga: extractMiai(res), reportUrl: src.url, engine: 'other' });
     } else if (src.kind === 'gokujan') {
       const res = await fetchGokujan(src.id);
       games.push({ name: '極雀で解析した牌譜', json: gokujanTenhou(res.data) as TenhouJson, naga: extractGokujan(res, src.id), reportUrl: src.url, engine: 'mortal' });

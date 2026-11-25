@@ -195,7 +195,7 @@ function GameCard({ game, index, rounds, reviewed, talked, onChanged, flash }: {
       <div className="row wrap">
         <button onClick={() => setShowOut((v) => !v)} disabled={!rounds.some((r) => r.tenhou_json)}>半荘をまとめて出力</button>
         <button onClick={addRound}>空の局を足す</button>
-        <button onClick={() => setShowNaga((v) => !v)} disabled={!rounds.length}>AI解析（NAGA・極雀）を取り込む</button>
+        <button onClick={() => setShowNaga((v) => !v)} disabled={!rounds.length}>AI解析（NAGA・極雀・Miai）を取り込む</button>
         <button className="danger" onClick={delGame}>{isArmed('game') ? '局ごと本当に削除' : '半荘を削除'}</button>
       </div>
       {showNaga && <NagaImport rounds={rounds} onDone={(m) => { flash(m); setShowNaga(false); onChanged(); }} />}
@@ -305,11 +305,11 @@ function ImportPaifu({ sessionId, onDone }: { sessionId: string; onDone: (msg: s
   }
   return (
     <details className="import" open>
-      <summary>既にある牌譜を取り込む（NAGA・極雀の解析なら結果も一緒に）</summary>
+      <summary>既にある牌譜を取り込む（NAGA・極雀・Miaiの解析なら結果も一緒に）</summary>
       <p className="quiet small">次のどれかを貼ってください（1行に1つ、何行でも）。天鳳牌譜エディタの局は、同じ4人なら1つの半荘にまとめます。</p>
       <ul className="quiet small">
         <li>天鳳牌譜エディタのURL（https://tenhou.net/6/#json=…）や、そのJSON</li>
-        <li>NAGAの解析レポートのURL、極雀の解析結果のURL（https://gokujan.com/review/…）。牌譜と解析結果をまとめて取り込みます。同じ牌譜がもうあれば、解析結果だけ付けます</li>
+        <li>NAGAの解析レポートのURL、極雀・Miaiの解析結果のURL（https://gokujan.com/review/…、https://riichi.miai.moe/r/…）。牌譜と解析結果をまとめて取り込みます。同じ牌譜がもうあれば、解析結果だけ付けます</li>
         <li>天鳳の対局のURL（https://tenhou.net/0/?log=…）</li>
       </ul>
       <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="https://tenhou.net/6/#json=… など" />
@@ -336,9 +336,9 @@ export function NagaImport({ rounds, onDone }: { rounds: { id: string; kyoku: nu
   }
   return (
     <div className="stack naga-import">
-      <small className="quiet">NAGAのレポートのURLか、極雀の解析結果のURL（https://gokujan.com/review/…）を貼ってください。局と本場が同じ局に、それぞれの結果を付けます。</small>
+      <small className="quiet">NAGAのレポート、極雀・Miaiの解析結果のURLを貼ってください。局と本場が同じ局に、それぞれの結果を付けます。</small>
       <div className="row">
-        <input className="grow" type="url" placeholder="NAGAのレポート・極雀の解析結果のURL" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input className="grow" type="url" placeholder="NAGAのレポート・極雀・Miaiの解析結果のURL" value={url} onChange={(e) => setUrl(e.target.value)} />
         <button className="primary" disabled={busy || !url.trim()} onClick={run}>{busy ? '読み込み中…' : '取り込む'}</button>
       </div>
       {err && <p className="bad small">{err}</p>}
