@@ -22,7 +22,7 @@ async def main():
         none_txt = await pg.inner_text('.naga-none summary')
         await pg.click('.naga-none summary')
         await pg.fill('.naga-none input[type=url]', URL); await pg.click('.naga-none button:has-text("取り込む")')
-        await pg.wait_for_selector('.naga .naga-hand')
+        await pg.wait_for_selector('.naga .naga-row')
         out['review'] = 'まだ取り込まれていません' in none_txt and len(db['study_ai_reviews']) == 1 and db['study_ai_reviews'][0]['naga']['reportId'] == RID
         # 2. 勉強会の画面：半荘ごとに貼る（同じレポートなら置き換えて増えない）
         await pg.click('text=← 勉強会'); await pg.wait_for_selector('.game')

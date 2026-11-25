@@ -160,3 +160,37 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .naga-hand .nh-bar { width:70%; height:26px; display:flex; align-items:flex-start; background:rgba(0,0,0,.18); border-radius:2px; }
 .naga-hand .nh-bar i { display:block; width:100%; background:#4ade80; border-radius:2px; }
 .naga-hand small { font-size:10px; color:#fff; min-height:12px; line-height:12px; }
+/* 振り返り：卓とNAGAの評価を1画面に */
+.review h2 { margin:4px 0 2px; font-size:17px; }
+.rv-top { padding:6px 8px; display:flex; flex-direction:column; gap:4px; }
+.rv-step { display:flex; align-items:center; gap:6px; }
+.rv-step button { padding:6px 12px; flex:none; }
+.rv-title { flex:1; display:flex; flex-direction:column; align-items:center; line-height:1.2; min-width:0; }
+.rv-title b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.rv-title small { font-size:11px; }
+.rv-top input[type=range] { margin:0; }
+.rv-opts { display:flex; gap:6px; }
+.rv-opts select { flex:1; min-width:0; font-size:13px; padding:4px 6px; }
+.review .rtable { margin:6px auto; }
+.naga.compact { padding:6px 8px; display:flex; flex-direction:column; gap:4px; }
+.naga-head { display:flex; align-items:center; gap:8px; }
+.naga-head .real { display:inline-flex; align-items:center; gap:3px; font-size:12px; }
+.naga-head .real .tile { --tw: 16px; }
+.naga-head select { margin-left:auto; width:auto; font-size:12px; padding:3px 6px; }
+.naga-rows { display:flex; flex-direction:column; }
+.naga-row { display:grid; grid-template-columns:4.6em 2.6em 1fr auto; align-items:center; gap:4px; padding:2px 0; border-top:1px solid var(--line); font-size:12px; cursor:pointer; }
+.naga-row.base .nm { font-weight:700; }
+.naga-row.base { background:rgba(47,107,79,.06); }
+.naga-row .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.naga-row .mark { font-size:10px; padding:0 3px; border-radius:4px; text-align:center; }
+.naga-row .mark.ok { background:#dcfce7; color:#166534; }
+.naga-row .mark.ng { background:#fee2e2; color:#991b1b; }
+.naga-row .cands { display:flex; flex-wrap:wrap; gap:6px; }
+.naga-row .cand { display:inline-flex; align-items:center; gap:2px; white-space:nowrap; }
+.naga-row .cand .tile { --tw: 15px; }
+.naga-row .cand.is-real { font-weight:700; }
+.naga-row .cand.is-real .tile { outline:1.5px solid #f43f5e; outline-offset:1px; }
+.naga-row .rp { font-size:11px; color:var(--quiet, #666); white-space:nowrap; }
+.naga.compact .chips { gap:4px; }
+.naga.compact .chips .chip { padding:2px 8px; font-size:12px; }
+.rv-top { scroll-margin-top:56px; }

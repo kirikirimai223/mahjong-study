@@ -35,14 +35,14 @@ async def main():
         # 振り返り：最初の打牌（Bさんの9筒ツモ切り）。NAGAは4タイプとも9索
         await pg.click('.roundbar a:has-text("振り返り")'); await pg.wait_for_selector('.naga')
         t = await pg.inner_text('.naga')
-        out['panel'] = ('ニシキ' in t and 'ウロボロス' in t and '違う' in t and '96%' in t and await pg.locator('.naga tr.ng').count() == 4)
+        out['panel'] = ('ニシキ' in t and 'ウロボロス' in t and '違う' in t and '96%' in t and await pg.locator('.naga .naga-row.ng').count() == 4)
         chips = await pg.locator('.naga .chips .chip').count()
         # 基準のタイプを変えても、違う打牌の一覧が出る。チップで飛べる
         await pg.select_option('.naga select', '2')
         await pg.click('.naga .chips .chip >> nth=1'); await pg.wait_for_timeout(200)
         cur = await pg.inner_text('.slider b')
         out['jump'] = chips > 0 and 'p=' in pg.url and await pg.locator('.naga .chips .chip.on').count() == 1
-        await pg.screenshot(path='/tmp/naga.png', full_page=True)
+        await pg.evaluate("() => document.querySelector('.rv-top').scrollIntoView()"); await pg.wait_for_timeout(100); await pg.screenshot(path='/tmp/naga.png')
         out['errors'] = errs
         await b.close()
     print(json.dumps({'ok': all(v is True for k, v in out.items() if k != 'errors') and not out['errors'], **out, 'msg': msg, 'chips': chips, 'cur': cur}, ensure_ascii=False))

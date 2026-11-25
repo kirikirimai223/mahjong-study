@@ -130,6 +130,9 @@ export function ReviewPage() {
     return map;
   }, [naga]);
   const names = round?.editor.names ?? ['', '', '', ''];
+  // 手前に置く家：NAGAの結果があれば打牌した家（その手牌の下に評価の棒が出る）、なければ選んだ家か自家
+  const viewMode: number | 'follow' = viewSeat ?? (seatFilter !== 'all' ? seatFilter : naga ? 'follow' : round?.editor.me ?? 0);
+  const viewOf = (f: ReplayFrame) => (viewMode === 'follow' ? (f.end?.winner ?? f.seat) : viewMode);
   const label = round ? roundLabelOf(round.kyoku, round.honba) : '';
   const back = sessionId ? `/sessions/${sessionId}` : '/';
 
@@ -144,31 +147,29 @@ export function ReviewPage() {
       {replay && 'error' in replay && <p className="bad">牌譜を再生できませんでした：{replay.error}</p>}
       {cur && replay && 'log' in replay && (
         <>
-          <div className="card stack slider">
-            <div className="row between">
-              <b>{cur.end ? endTitle(cur, names) : `${WIND[(cur.seat - replay.log!.setup.kyoku % 4 + 4) % 4]}家 ${names[cur.seat]}・${cur.discardIndex + 1}打目`}</b>
-              <small className="quiet">{cur.end ? cur.end.points : cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}</small>
+          <div className="card slider rv-top">
+            <div className="rv-step">
+              <button onClick={() => step(-1)} disabled={shownPos <= 0} aria-label="前">◀</button>
+              <div className="rv-title">
+                <b>{cur.end ? endTitle(cur, names) : `${WIND[(cur.seat - replay.log!.setup.kyoku % 4 + 4) % 4]}家 ${names[cur.seat]}・${cur.discardIndex + 1}打目`}</b>
+                <small className="quiet">{cur.end ? cur.end.points : cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}</small>
+              </div>
+              <button onClick={() => step(1)} disabled={shownPos >= shown.length - 1} aria-label="次">▶</button>
             </div>
             <input type="range" min={0} max={Math.max(0, shown.length - 1)} value={Math.max(0, shownPos)} onChange={(e) => go(shown[Number(e.target.value)].i)} />
-            <div className="row between">
-              <button onClick={() => step(-1)} disabled={shownPos <= 0}>◀ 前</button>
-              <select value={String(seatFilter)} onChange={(e) => setSeatFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))} style={{ width: 'auto' }}>
+            <div className="rv-opts">
+              <select value={String(seatFilter)} onChange={(e) => setSeatFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
                 <option value="all">全員の打牌</option>
                 {[0, 1, 2, 3].map((s) => <option key={s} value={s}>{names[s]}の打牌だけ</option>)}
               </select>
-              <button onClick={() => step(1)} disabled={shownPos >= shown.length - 1}>次 ▶</button>
+              <select value={String(viewMode)} onChange={(e) => setViewSeat(e.target.value === 'follow' ? 'follow' : Number(e.target.value))} aria-label="手前に置く家">
+                <option value="follow">手前：打牌した家</option>
+                {[0, 1, 2, 3].map((s) => <option key={s} value={s}>手前：{names[s]}</option>)}
+              </select>
             </div>
-            {commentCount.size > 0 && (
-              <div className="chips">
-                <small className="quiet">話した局面：</small>
-                {frames.map((f, i) => ({ f, i })).filter(({ f }) => commentCount.has(posKey(f.seat, f.discardIndex))).map(({ f, i }) => (
-                  <button key={i} className={`chip ${i === curIndex ? 'on' : ''}`} onClick={() => go(i)}>
-                    {names[f.seat]} {f.discardIndex + 1}打目{commentCount.get(posKey(f.seat, f.discardIndex)) ? `（${commentCount.get(posKey(f.seat, f.discardIndex))}）` : ''}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
+          <ReviewTable frame={cur} names={names} setup={replay.log!.setup} randomized={round!.randomized_seats}
+            view={viewOf(cur)} naga={nagaOf.get(posKey(cur.seat, cur.discardIndex))} nagaType={nagaType} />
           {!naga && (
             <details className="card naga-none" open={!!nagaMsg}>
               <summary><b>NAGAの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてレポートのURLを貼る）</small></summary>
@@ -179,19 +180,20 @@ export function ReviewPage() {
           {naga && nagaMsg && <p className="small">{nagaMsg}</p>}
           {naga && (
             <NagaPanel naga={naga} frame={cur} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
+              showHand={viewOf(cur) !== cur.seat}
               mismatches={frames.map((f, i) => ({ f, i })).filter(({ f }) => (seatFilter === 'all' || f.seat === seatFilter) && (() => { const d = nagaOf.get(posKey(f.seat, f.discardIndex)); return d && !agrees(d, nagaType); })())}
               names={names} curIndex={curIndex} go={go} />
           )}
-          <div className="viewsel">
-            <small className="quiet">手前に置く家</small>
-            <select value={String(viewSeat ?? (seatFilter !== 'all' ? seatFilter : round!.editor.me ?? 0))} onChange={(e) => setViewSeat(e.target.value === 'follow' ? 'follow' : Number(e.target.value))} style={{ width: 'auto' }}>
-              {[0, 1, 2, 3].map((s) => <option key={s} value={s}>{names[s]}</option>)}
-              <option value="follow">打牌した家（毎回回す）</option>
-            </select>
-          </div>
-          <ReviewTable frame={cur} names={names} setup={replay.log!.setup} randomized={round!.randomized_seats}
-            view={viewSeat === 'follow' ? (cur.end?.winner ?? cur.seat) : viewSeat ?? (seatFilter !== 'all' ? seatFilter : round!.editor.me ?? 0)}
-            naga={nagaOf.get(posKey(cur.seat, cur.discardIndex))} nagaType={nagaType} />
+          {commentCount.size > 0 && (
+            <div className="chips">
+              <small className="quiet">話した局面：</small>
+              {frames.map((f, i) => ({ f, i })).filter(({ f }) => commentCount.has(posKey(f.seat, f.discardIndex))).map(({ f, i }) => (
+                <button key={i} className={`chip ${i === curIndex ? 'on' : ''}`} onClick={() => go(i)}>
+                  {names[f.seat]} {f.discardIndex + 1}打目{commentCount.get(posKey(f.seat, f.discardIndex)) ? `（${commentCount.get(posKey(f.seat, f.discardIndex))}）` : ''}
+                </button>
+              ))}
+            </div>
+          )}
           {cur.end && cur.end.yaku.length > 0 && <p className="small">{cur.end.yaku.join('・')}</p>}
           <PositionNotes
             key={posKey(cur.seat, cur.discardIndex)}
@@ -216,46 +218,38 @@ function MTile({ p, cls = 'sm' }: { p: string | null; cls?: string }) {
   return t ? <Tile t={t} cls={cls} /> : <span className="quiet">―</span>;
 }
 
-/** NAGAの推奨と実際の打牌を並べる。違う打牌の局面へも飛べる */
-function NagaPanel({ naga, frame, decision, type, setType, mismatches, names, curIndex, go }: {
-  naga: StoredNaga; frame: ReplayFrame; decision: NagaDecision | undefined; type: number; setType: (n: number) => void;
+/** NAGAの推奨と実際の打牌を並べる（卓と一緒に1画面に収まるよう、タイプごとに1行）。違う打牌の局面へも飛べる */
+function NagaPanel({ naga, frame, decision, type, setType, showHand, mismatches, names, curIndex, go }: {
+  naga: StoredNaga; frame: ReplayFrame; decision: NagaDecision | undefined; type: number; setType: (n: number) => void; showHand: boolean;
   mismatches: { f: ReplayFrame; i: number }[]; names: string[]; curIndex: number; go: (i: number) => void;
 }) {
   return (
-    <div className="card stack naga">
-      <div className="row between">
+    <div className="card naga compact">
+      <div className="naga-head">
         <b>NAGA</b>
-        <span className="row">
-          <small className="quiet">基準</small>
-          <select value={type} onChange={(e) => setType(Number(e.target.value))} style={{ width: 'auto' }}>
-            {naga.types.map((t, i) => <option key={i} value={i}>{t}</option>)}
-          </select>
-        </span>
+        {decision && <span className="real">実際 <MTile p={decision.real} /></span>}
+        <select value={type} onChange={(e) => setType(Number(e.target.value))} aria-label="基準のタイプ">
+          {naga.types.map((t, i) => <option key={i} value={i}>基準：{t}</option>)}
+        </select>
       </div>
-      {decision && !frame.end && (
-        <div className="stack">
-          <small className="quiet">{names[frame.seat]}の手牌と、{naga.types[type]}の評価（%）。赤枠が実際に切った牌</small>
-          <NagaHand s={frame.seats[frame.seat]} naga={decision} nagaType={type} cutTile={frame.tile} />
-        </div>
-      )}
+      {decision && !frame.end && showHand && <NagaHand s={frame.seats[frame.seat]} naga={decision} nagaType={type} cutTile={frame.tile} />}
       {decision ? (
-        <table className="naga-table">
-          <thead><tr><th>タイプ</th><th>推奨</th><th>実際 <MTile p={decision.real} /></th><th>候補</th></tr></thead>
-          <tbody>
-            {naga.types.map((t, ti) => {
-              const ok = agrees(decision, ti);
-              return (
-                <tr key={ti} className={`${ok ? 'ok' : 'ng'} ${ti === type ? 'base' : ''}`}>
-                  <td>{t}</td>
-                  <td><MTile p={decision.pred[ti]} />{ok ? <span className="mark ok">一致</span> : <span className="mark ng">違う</span>}</td>
-                  <td>{pct(decision.realP[ti])}</td>
-                  <td className="cands">{decision.top[ti].map((c) => <span key={c.tile}><MTile p={c.tile} />{pct(c.p)}</span>)}
-                    {decision.riichi[ti] != null && <small className="quiet">立直 {pct(decision.riichi[ti])}</small>}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="naga-rows">
+          {naga.types.map((t, ti) => {
+            const ok = agrees(decision, ti);
+            return (
+              <div key={ti} className={`naga-row ${ok ? 'ok' : 'ng'} ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}>
+                <span className="nm">{t}</span>
+                <span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span>
+                <span className="cands">
+                  {decision.top[ti].map((c) => <span key={c.tile} className={`cand ${c.tile.replace(/r$/, '') === decision.real.replace(/r$/, '') ? 'is-real' : ''}`}><MTile p={c.tile} />{pct(c.p)}</span>)}
+                  {decision.top[ti].length === 0 && <span className="quiet">―</span>}
+                </span>
+                <span className="rp">実際{pct(decision.realP[ti])}{decision.riichi[ti] != null ? `・立直${pct(decision.riichi[ti])}` : ''}</span>
+              </div>
+            );
+          })}
+        </div>
       ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはNAGAの評価がありません（打牌が1つしか選べない局面など）'}</p>}
       {mismatches.length > 0 && (
         <div className="chips">
