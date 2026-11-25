@@ -149,6 +149,25 @@ export function ReviewPage() {
     return out;
   };
   const names = round?.editor.names ?? ['', '', '', ''];
+  // 前に選んだ「打牌の絞り込み」「手前」「基準のタイプ」を、別の局・半荘でも名前で選び直す
+  const namesKey = names.join('\u0001');
+  useEffect(() => {
+    if (!round) return;
+    const pr = loadPrefs();
+    const at = (n: string | undefined) => (n ? names.indexOf(n) : -1);
+    setSeatFilter(pr.seat && pr.seat !== 'all' && at(pr.seat) >= 0 ? at(pr.seat) : 'all');
+    setViewSeat(pr.view === 'follow' ? 'follow' : pr.view && at(pr.view) >= 0 ? at(pr.view) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round?.id, namesKey]);
+  useEffect(() => {
+    if (!naga) return;
+    const t = loadPrefs().type;
+    const i = t ? naga.types.indexOf(t) : -1;
+    setNagaType(i >= 0 ? i : 0);
+  }, [naga]);
+  const chooseSeat = (v: number | 'all') => { setSeatFilter(v); savePrefs({ seat: v === 'all' ? 'all' : names[v] }); };
+  const chooseView = (v: number | 'follow') => { setViewSeat(v); savePrefs({ view: v === 'follow' ? 'follow' : names[v] }); };
+  const chooseType = (i: number) => { setNagaType(i); if (naga?.types[i]) savePrefs({ type: naga.types[i] }); };
   // 手前に置く家：NAGAの結果があれば打牌した家（その手牌の下に評価の棒が出る）、なければ選んだ家か自家
   const viewMode: number | 'follow' = viewSeat ?? (seatFilter !== 'all' ? seatFilter : naga ? 'follow' : round?.editor.me ?? 0);
   const viewOf = (f: ReplayFrame) => (viewMode === 'follow' ? (f.end?.winner ?? f.seat) : viewMode);
@@ -177,11 +196,11 @@ export function ReviewPage() {
             </div>
             <input type="range" min={0} max={Math.max(0, shown.length - 1)} value={Math.max(0, shownPos)} onChange={(e) => go(shown[Number(e.target.value)].i)} />
             <div className="rv-opts">
-              <select value={String(seatFilter)} onChange={(e) => setSeatFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+              <select value={String(seatFilter)} onChange={(e) => chooseSeat(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
                 <option value="all">全員の打牌</option>
                 {[0, 1, 2, 3].map((s) => <option key={s} value={s}>{names[s]}の打牌だけ</option>)}
               </select>
-              <select value={String(viewMode)} onChange={(e) => setViewSeat(e.target.value === 'follow' ? 'follow' : Number(e.target.value))} aria-label="手前に置く家">
+              <select value={String(viewMode)} onChange={(e) => chooseView(e.target.value === 'follow' ? 'follow' : Number(e.target.value))} aria-label="手前に置く家">
                 <option value="follow">手前：打牌した家</option>
                 {[0, 1, 2, 3].map((s) => <option key={s} value={s}>手前：{names[s]}</option>)}
               </select>
@@ -198,7 +217,7 @@ export function ReviewPage() {
           )}
           {naga && nagaMsg && <p className="small">{nagaMsg}</p>}
           {naga && (
-            <NagaPanel naga={naga} frame={cur} decision={seatFilter !== 'all' && cur.seat !== seatFilter ? undefined : nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
+            <NagaPanel naga={naga} frame={cur} decision={seatFilter !== 'all' && cur.seat !== seatFilter ? undefined : nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={chooseType}
               showHand={viewOf(cur) !== cur.seat} calls={(callsOf.get(posKey(cur.seat, cur.discardIndex)) ?? []).filter((c) => seatFilter === 'all' || cur.seat === seatFilter || c.seat === seatFilter)}
               mismatches={frames.map((f, i) => ({ f, i, m: missesAt(f, nagaType) })).filter(({ f, m }) => (seatFilter === 'all' || f.seat === seatFilter || (m.includes('鳴き') && (callsOf.get(posKey(f.seat, f.discardIndex)) ?? []).some((c) => c.seat === seatFilter))) && m.length > 0)}
               names={names} curIndex={curIndex} go={go} />
@@ -261,11 +280,11 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             const miss = decisionMisses(decision, ti);
             const ok = miss.length === 0;
             if (decision.pred[ti] == null && decision.top[ti].length === 0 && decision.riichi[ti] == null) {
-              return <div key={ti} className={`naga-row ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className="mark">―</span><span className="quiet">この家は解析していません</span><span /></div>;
+              return <div key={ti} className={`naga-row ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{shortType(t)}</span><span className="mark">―</span><span className="quiet">この家は解析していません</span><span /></div>;
             }
             return (
               <div key={ti} className={`naga-row ${ok ? 'ok' : 'ng'} ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}>
-                <span className="nm">{t}</span>
+                <span className="nm">{shortType(t)}</span>
                 <span className={`mark ${ok ? 'ok' : 'ng'}`} title={miss.join('・')}>{ok ? '一致' : miss.length === 1 && miss[0] !== '打牌' ? `${miss[0]}違う` : '違う'}</span>
                 <span className="cands">
                   {decision.top[ti].map((c) => <span key={c.tile} className={`cand ${c.tile.replace(/r$/, '') === decision.real.replace(/r$/, '') ? 'is-real' : ''}`}><MTile p={c.tile} />{pct(c.p)}</span>)}
@@ -284,7 +303,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             const r = decision.riichi[ti];
             if (r == null) return null;
             const ok = (r >= 0.5) === !!decision.realRiichi;
-            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>立直 {pct(r)}・しない {pct(1 - r)}</span><span /></div>;
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{shortType(t)}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>立直 {pct(r)}・しない {pct(1 - r)}</span><span /></div>;
           })}
         </div>
       )}
@@ -295,7 +314,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             const k = decision.kan?.[ti];
             if (!k) return null;
             const ok = bestOf(k) === (decision.realKan ?? 'skip');
-            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(k).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{shortType(t)}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(k).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
           })}
         </div>
       )}
@@ -306,7 +325,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             const o = c.opts[ti];
             if (!o) return null;
             const ok = !callMiss(c, ti);
-            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(o).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{shortType(t)}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(o).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
           })}
         </div>
       ))}
@@ -435,4 +454,18 @@ function PositionNotes({ roundId, seat, discardIndex, position, comments, member
       {msg && <p className="small">{msg}</p>}
     </section>
   );
+}
+
+/** 振り返りの選び方（席は名前で覚える） */
+type Prefs = { seat?: string; view?: string; type?: string };
+const PREFS = 'review:prefs';
+function loadPrefs(): Prefs {
+  try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as Prefs; } catch { return {}; }
+}
+function savePrefs(p: Prefs) {
+  try { localStorage.setItem(PREFS, JSON.stringify({ ...loadPrefs(), ...p })); } catch { /* 保存できなくても動く */ }
+}
+/** 評価の一覧で、タイプ名を2行に収まる形にする（「Miai（ラス回避）」→「Miai ラス回避」） */
+function shortType(t: string) {
+  return t.replace(/（(.+)）$/, ' $1');
 }

@@ -178,10 +178,10 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .naga-head .real .tile { --tw: 16px; }
 .naga-head select { margin-left:auto; width:auto; font-size:12px; padding:3px 6px; }
 .naga-rows { display:flex; flex-direction:column; }
-.naga-row { display:grid; grid-template-columns:4.6em 2.6em 1fr auto; align-items:center; gap:4px; padding:2px 0; border-top:1px solid var(--line); font-size:12px; cursor:pointer; }
+.naga-row { display:grid; grid-template-columns:5.4em 2.6em 1fr auto; align-items:center; gap:4px; padding:2px 0; border-top:1px solid var(--line); font-size:12px; cursor:pointer; }
 .naga-row.base .nm { font-weight:700; }
 .naga-row.base { background:rgba(47,107,79,.06); }
-.naga-row .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.naga-row .nm { line-height:1.15; word-break:keep-all; overflow-wrap:break-word; }
 .naga-row .mark { font-size:10px; padding:0 3px; border-radius:4px; text-align:center; }
 .naga-row .mark.ok { background:#dcfce7; color:#166534; }
 .naga-row .mark.ng { background:#fee2e2; color:#991b1b; }
@@ -198,4 +198,4 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .naga-sub .sub-head { display:flex; align-items:center; gap:8px; font-size:12px; flex-wrap:wrap; }
 .naga-sub .sub-head span { display:inline-flex; align-items:center; gap:2px; color:var(--quiet, #555); }
 .naga-sub .sub-head .tile { --tw: 14px; }
-.naga-row.sub { grid-template-columns:4.6em 2.6em 1fr auto; border-top:none; }
+.naga-row.sub { grid-template-columns:5.4em 2.6em 1fr auto; border-top:none; }
