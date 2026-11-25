@@ -7,6 +7,13 @@ type Option = { event: unknown; p: number };
 type Decision = { at: number; played: number; matched?: boolean; bad?: boolean; options: Option[] };
 
 export async function GET(request: Request): Promise<Response> {
+  const asset = new URL(request.url).searchParams.get('asset');
+  // 説明ページ（/understand）の中身を調べるため、公開されている画面の部品だけは中継する
+  if (asset != null) {
+    if (!/^[A-Za-z0-9_-]{1,60}\.js$/.test(asset)) return json({ error: 'bad asset' }, 400);
+    const a = await fetch(`https://riichi.miai.moe/assets/${asset}`, { headers: HEADERS });
+    return new Response(await a.text(), { status: a.status, headers: { 'content-type': 'text/javascript; charset=utf-8' } });
+  }
   const id = new URL(request.url).searchParams.get('id') ?? '';
   if (!ID.test(id)) return json({ error: '解析のidの形が正しくありません（https://riichi.miai.moe/r/… のURLを貼ってください）' }, 400);
   try {
