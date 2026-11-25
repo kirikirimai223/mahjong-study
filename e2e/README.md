@@ -22,5 +22,6 @@
 - `python3 e2e/pwa.py` … 本番ビルド（`npm run build && npx vite preview --port 4173`）で、ホーム画面に追加（マニフェスト・アイコン・サービスワーカー・オフラインで画面が開く）と、招待の案内文（登録リンクつき）
 - `python3 e2e/naga.py` … NAGAのレポートURLを貼ると結果を取り込み（/api/naga-report は偽装、レポートは test/naga-report.json.gz）、振り返りで推奨打牌と並べ、違う打牌へ飛べる
 - `python3 e2e/import_paifu.py` … 既にある牌譜（天鳳牌譜エディタのURL4つ＋NAGAのレポート）を取り込み、エディタで保存し直すと元の牌譜と同じになる
+- `python3 e2e/naga_attach.py` … 牌譜だけ取り込んだ局に、振り返り画面・勉強会の画面（半荘ごと）からNAGAの結果を付ける
 - `python3 e2e/app_mock.py`
   … Supabase の REST をブラウザ内で偽装して、勉強会の作成 → 半荘 → 局の入力・自動保存・次の局へ → まとめて出力 → 試作の記録の取り込み までを通す

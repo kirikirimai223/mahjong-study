@@ -8,6 +8,7 @@ import {
 import { useConfirm } from '../lib/useConfirm';
 import { importProtoRecords } from '../lib/importProto';
 import { loadSources, saveImported } from '../lib/importTenhou';
+import { attachNagaToRounds } from '../lib/naga';
 import { fmtDate } from './Sessions';
 
 export function SessionDetail() {
@@ -142,6 +143,7 @@ function GameCard({ game, index, rounds, reviewed, talked, onChanged, flash }: {
   const { confirm, isArmed } = useConfirm();
   const [showOut, setShowOut] = useState(false);
   const out = showOut ? combineRounds(rounds, game.name) : null;
+  const [showNaga, setShowNaga] = useState(false);
 
   async function delRound(r: RoundListRow) {
     if (!confirm(`r:${r.id}`)) return;
@@ -193,8 +195,10 @@ function GameCard({ game, index, rounds, reviewed, talked, onChanged, flash }: {
       <div className="row wrap">
         <button onClick={() => setShowOut((v) => !v)} disabled={!rounds.some((r) => r.tenhou_json)}>半荘をまとめて出力</button>
         <button onClick={addRound}>空の局を足す</button>
+        <button onClick={() => setShowNaga((v) => !v)} disabled={!rounds.length}>NAGAの結果を取り込む</button>
         <button className="danger" onClick={delGame}>{isArmed('game') ? '局ごと本当に削除' : '半荘を削除'}</button>
       </div>
+      {showNaga && <NagaImport rounds={rounds} onDone={(m) => { flash(m); setShowNaga(false); onChanged(); }} />}
       {out && (
         <div className="out">
           <p>{out.count}局を1つの牌譜にまとめました。{out.missing.length > 0 && <small><br />天鳳形式になっていない局は入っていません：{out.missing.join('、')}</small>}</p>
@@ -308,5 +312,32 @@ function ImportPaifu({ sessionId, onDone }: { sessionId: string; onDone: (msg: s
       <button className="primary" disabled={busy || !text.trim()} onClick={run}>{busy ? '取り込んでいます…' : '取り込む'}</button>
       {err && <p className="bad small">{err}</p>}
     </details>
+  );
+}
+
+/** 半荘の局に、NAGAのレポート（半荘まるごと・1局ずつのどちらでも）の結果を付ける */
+export function NagaImport({ rounds, onDone }: { rounds: { id: string; kyoku: number; honba: number }[]; onDone: (msg: string) => void }) {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function run() {
+    setBusy(true); setErr('');
+    try {
+      const n = await attachNagaToRounds(url.trim(), rounds);
+      if (!n.attached) throw new Error(`この半荘に、レポートの局（${n.unmatched.join('・')}）と同じ局がありません`);
+      setUrl('');
+      onDone(`${n.attached}局にNAGAの結果（${n.types.join('・')}）を付けました${n.unmatched.length ? `。合う局が無かった局：${n.unmatched.join('・')}` : ''}`);
+    } catch (e) { setErr(errorText(e)); }
+    setBusy(false);
+  }
+  return (
+    <div className="stack naga-import">
+      <small className="quiet">NAGAの解析一覧からレポートを開き、そのURLを貼ってください。局と本場が同じ局に、それぞれの結果を付けます。</small>
+      <div className="row">
+        <input className="grow" type="url" placeholder="https://naga.dmv.nico/htmls/report_viewer.html?report_id=…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <button className="primary" disabled={busy || !url.trim()} onClick={run}>{busy ? '読み込み中…' : '取り込む'}</button>
+      </div>
+      {err && <p className="bad small">{err}</p>}
+    </div>
   );
 }

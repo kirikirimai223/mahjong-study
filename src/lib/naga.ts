@@ -153,3 +153,32 @@ export function tileToMjai(t: number): string {
   if (t >= 41) return 'ESWNPFC'[t - 41];
   return `${t % 10}${'mps'[Math.floor(t / 10) - 1]}`;
 }
+
+/**
+ * NAGAのレポートを読み、半荘の局（局・本場が同じもの）それぞれに解析結果を付ける。
+ * rounds：その半荘の局。戻り値：付けた局の数と、レポートにあって合う局が無かった局の名前
+ */
+export async function attachNagaToRounds(reportUrl: string, rounds: { id: string; kyoku: number; honba: number }[]) {
+  const rid = nagaReportId(reportUrl);
+  if (!rid) throw new Error('NAGAのレポートのURLではありません（report_id が入っていません）。解析一覧から開いたレポートのURLを貼ってください');
+  const { supabase } = await import('./supabase');
+  const sum = extractNaga(await fetchNagaReport(rid), rid);
+  let attached = 0;
+  const unmatched: string[] = [];
+  for (const k of sum.kyokus) {
+    const r = rounds.find((x) => x.kyoku === k.kyoku && x.honba === k.honba) ?? (sum.kyokus.length === 1 && rounds.length === 1 ? rounds[0] : undefined);
+    if (!r) { unmatched.push(kyokuName(k.kyoku, k.honba)); continue; }
+    const naga = { reportId: rid, types: sum.types, kyoku: k, fetchedAt: new Date().toISOString() };
+    // 同じレポートを取り込み直したときは、前の分を置き換える
+    const old = await supabase.from('study_ai_reviews').select('id, naga').eq('round_id', r.id).eq('engine', 'naga');
+    if (old.error) throw old.error;
+    const same = (old.data ?? []).find((x) => (x.naga as { reportId?: string } | null)?.reportId === rid);
+    const res = same
+      ? await supabase.from('study_ai_reviews').update({ naga, report_url: reportUrl }).eq('id', same.id)
+      : await supabase.from('study_ai_reviews').insert({ round_id: r.id, engine: 'naga', report_url: reportUrl, note: '', naga });
+    if (res.error) throw res.error;
+    attached++;
+  }
+  return { attached, unmatched, types: sum.types };
+}
+const kyokuName = (k: number, h: number) => `${['東', '南', '西', '北'][Math.floor(k / 4)]}${(k % 4) + 1}局${h ? `${h}本場` : ''}`;

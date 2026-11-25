@@ -10,6 +10,7 @@ import { useConfirm } from '../lib/useConfirm';
 import { agrees, mjaiTile, type NagaDecision } from '../lib/naga';
 import type { StoredNaga } from './Reviews';
 import { NagaHand, ReviewTable } from './ReviewTable';
+import { NagaImport } from './SessionDetail';
 
 type Position = { id: string; seat: number; discard_index: number; conclusion: string; conclusion_by: string | null; updated_at: string };
 type Comment = { id: string; position_id: string | null; author_id: string; speaker: string; body: string; tags: string[]; created_at: string };
@@ -35,6 +36,13 @@ export function ReviewPage() {
   // 手前に置く家：null＝自家（入力した人の席）、'follow'＝打牌した家に合わせて毎回回す
   const [viewSeat, setViewSeat] = useState<number | 'follow' | null>(null);
 
+  const [gameRounds, setGameRounds] = useState<{ id: string; kyoku: number; honba: number }[]>([]);
+  const [nagaMsg, setNagaMsg] = useState('');
+  // 取り込んだNAGAの結果（いちばん新しいもの）
+  const loadNaga = useCallback(async () => {
+    const ai = await supabase.from('study_ai_reviews').select('naga, created_at').eq('round_id', id!).not('naga', 'is', null).order('created_at', { ascending: false }).limit(1);
+    setNaga(ai.data?.[0] ? (ai.data[0].naga as StoredNaga) : null);
+  }, [id]);
   const loadNotes = useCallback(async () => {
     const [p, c] = await Promise.all([
       supabase.from('study_positions').select('id, seat, discard_index, conclusion, conclusion_by, updated_at').eq('round_id', id!),
@@ -57,15 +65,17 @@ export function ReviewPage() {
         const g = await supabase.from('study_games').select('session_id').eq('id', r.data.game_id).maybeSingle();
         if (!cancelled) setSessionId(g.data?.session_id ?? null);
       }
-      // 取り込んだNAGAの結果（いちばん新しいもの）
-      const ai = await supabase.from('study_ai_reviews').select('naga, created_at').eq('round_id', id!).not('naga', 'is', null).order('created_at', { ascending: false }).limit(1);
-      if (!cancelled && ai.data?.[0]) setNaga(ai.data[0].naga as StoredNaga);
+      if (!cancelled) loadNaga();
+      if (!cancelled && r.data.game_id) {
+        const gr = await supabase.from('study_rounds').select('id, kyoku, honba').eq('game_id', r.data.game_id);
+        if (!cancelled && gr.data) setGameRounds(gr.data as { id: string; kyoku: number; honba: number }[]);
+      }
       const m = await supabase.from('study_members').select('id, display_name');
       if (!cancelled && m.data) setMembers(Object.fromEntries((m.data as Member[]).map((x) => [x.id, x.display_name])));
       loadNotes();
     })();
     return () => { cancelled = true; };
-  }, [id, loadNotes]);
+  }, [id, loadNotes, loadNaga]);
 
   // 他のメンバーのコメントもその場で反映する（Realtime が使えなければ、開き直したときに反映）
   useEffect(() => {
@@ -159,6 +169,14 @@ export function ReviewPage() {
               </div>
             )}
           </div>
+          {!naga && (
+            <details className="card naga-none" open={!!nagaMsg}>
+              <summary><b>NAGAの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてレポートのURLを貼る）</small></summary>
+              <NagaImport rounds={gameRounds.length ? gameRounds : [{ id: id!, kyoku: round!.kyoku, honba: round!.honba }]} onDone={(m) => { setNagaMsg(m); loadNaga(); }} />
+              {nagaMsg && <p className="small">{nagaMsg}</p>}
+            </details>
+          )}
+          {naga && nagaMsg && <p className="small">{nagaMsg}</p>}
           {naga && (
             <NagaPanel naga={naga} frame={cur} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
               mismatches={frames.map((f, i) => ({ f, i })).filter(({ f }) => (seatFilter === 'all' || f.seat === seatFilter) && (() => { const d = nagaOf.get(posKey(f.seat, f.discardIndex)); return d && !agrees(d, nagaType); })())}
