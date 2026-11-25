@@ -62,7 +62,7 @@ export type NagaCall = {
 export type NagaKyoku = { kyoku: number; honba: number; decisions: NagaDecision[]; calls?: NagaCall[] };
 
 /** 鳴き・槓の判断の名前 */
-export const ACTION_NAME: Record<string, string> = { skip: 'スルー', chi_low: 'チー（下）', chi_mid: 'チー（嵌）', chi_high: 'チー（上）', pon: 'ポン', daiminkan: '明槓', ankan: '暗槓', kakan: '加槓' };
+export const ACTION_NAME: Record<string, string> = { hora: 'ロン', skip: 'スルー', chi_low: 'チー（下）', chi_mid: 'チー（嵌）', chi_high: 'チー（上）', pon: 'ポン', daiminkan: '明槓', ankan: '暗槓', kakan: '加槓' };
 const HURO_KEY: Record<string, string> = { 0: 'skip', 1: 'chi_low', 2: 'chi_mid', 3: 'chi_high', 4: 'pon', 5: 'daiminkan' };
 const KAN_KEY: Record<string, string> = { 0: 'skip', 1: 'ankan', 2: 'kakan' };
 const toOpts = (o: Record<string, number> | null | undefined, names: Record<string, string>) =>
@@ -212,23 +212,26 @@ export function tileToMjai(t: number): string {
  * rounds：その半荘の局。戻り値：付けた局の数と、レポートにあって合う局が無かった局の名前
  */
 export async function attachNagaToRounds(reportUrl: string, rounds: { id: string; kyoku: number; honba: number }[]) {
-  const rid = nagaReportId(reportUrl);
-  if (!rid) throw new Error('NAGAのレポートのURLではありません（report_id が入っていません）。解析一覧から開いたレポートのURLを貼ってください');
   const { supabase } = await import('./supabase');
-  const sum = extractNaga(await fetchNagaReport(rid), rid);
+  const { extractGokujan, fetchGokujan, gokujanId } = await import('./gokujan');
+  const gid = gokujanId(reportUrl);
+  const rid = gid ? `gokujan:${gid}` : nagaReportId(reportUrl);
+  if (!rid) throw new Error('NAGAのレポート（report_id の入ったURL）か、極雀の解析結果（https://gokujan.com/review/…）のURLを貼ってください');
+  const engine = gid ? 'mortal' : 'naga';
+  const sum = gid ? extractGokujan(await fetchGokujan(gid), gid) : extractNaga(await fetchNagaReport(rid), rid);
   let attached = 0;
   const unmatched: string[] = [];
   for (const k of sum.kyokus) {
     const r = rounds.find((x) => x.kyoku === k.kyoku && x.honba === k.honba) ?? (sum.kyokus.length === 1 && rounds.length === 1 ? rounds[0] : undefined);
     if (!r) { unmatched.push(kyokuName(k.kyoku, k.honba)); continue; }
-    const naga = { reportId: rid, types: sum.types, kyoku: k, fetchedAt: new Date().toISOString() };
+    const naga = { reportId: rid!, types: sum.types, kyoku: k, fetchedAt: new Date().toISOString() };
     // 同じレポートを取り込み直したときは、前の分を置き換える
-    const old = await supabase.from('study_ai_reviews').select('id, naga').eq('round_id', r.id).eq('engine', 'naga');
+    const old = await supabase.from('study_ai_reviews').select('id, naga').eq('round_id', r.id).eq('engine', engine);
     if (old.error) throw old.error;
     const same = (old.data ?? []).find((x) => (x.naga as { reportId?: string } | null)?.reportId === rid);
     const res = same
       ? await supabase.from('study_ai_reviews').update({ naga, report_url: reportUrl }).eq('id', same.id)
-      : await supabase.from('study_ai_reviews').insert({ round_id: r.id, engine: 'naga', report_url: reportUrl, note: '', naga });
+      : await supabase.from('study_ai_reviews').insert({ round_id: r.id, engine, report_url: reportUrl, note: '', naga });
     if (res.error) throw res.error;
     attached++;
   }
@@ -248,7 +251,7 @@ function chiKind(pai: string, consumed: string[]) {
 /** そのタイプの判断と実際が違うところ（打牌・立直・槓）。違うものの名前を返す */
 export function decisionMisses(d: NagaDecision, ti: number): string[] {
   const out: string[] = [];
-  if (!agrees(d, ti)) out.push('打牌');
+  if (d.pred[ti] != null && !agrees(d, ti)) out.push('打牌');
   const r = d.riichi[ti];
   if (r != null && (r >= 0.5) !== !!d.realRiichi) out.push('立直');
   const k = d.kan?.[ti];
@@ -256,3 +259,52 @@ export function decisionMisses(d: NagaDecision, ti: number): string[] {
   return out;
 }
 export const callMiss = (c: NagaCall, ti: number) => { const b = bestOf(c.opts[ti]); return b != null && b !== c.real; };
+
+/** 解析の結果（NAGAのタイプや極雀など）がいくつあるとき、1つにまとめる。タイプを並べ、無い局面のタイプは空にする */
+export function mergeNaga<T extends { reportId: string; types: string[]; kyoku: NagaKyoku }>(list: T[]): T | null {
+  if (list.length <= 1) return list[0] ?? null;
+  const types = list.flatMap((x) => x.types);
+  const n = types.length;
+  const decisions = new Map<string, NagaDecision>();
+  const calls = new Map<string, NagaCall>();
+  let off = 0;
+  const pad = <V>(arr: V[] | undefined, fill: V, o: number, len: number, into?: V[]) => {
+    const out = into ?? Array.from({ length: n }, () => fill);
+    for (let i = 0; i < len; i++) out[o + i] = arr?.[i] ?? fill;
+    return out;
+  };
+  for (const x of list) {
+    const len = x.types.length;
+    for (const d of x.kyoku.decisions) {
+      const key = `${d.seat}-${d.discardIndex}`;
+      const cur = decisions.get(key);
+      const base: NagaDecision = cur ?? { seat: d.seat, discardIndex: d.discardIndex, real: d.real, pred: [], realP: [], top: [], riichi: [], dist: [], kan: [] };
+      base.pred = pad(d.pred, null, off, len, cur ? base.pred : undefined);
+      base.realP = pad(d.realP, null, off, len, cur ? base.realP : undefined);
+      base.top = pad(d.top, [], off, len, cur ? base.top : undefined);
+      base.riichi = pad(d.riichi, null, off, len, cur ? base.riichi : undefined);
+      base.dist = pad(d.dist, {}, off, len, cur ? base.dist : undefined);
+      base.kan = pad(d.kan, null, off, len, cur ? base.kan : undefined);
+      if (d.realRiichi) base.realRiichi = true;
+      if (d.realKan && d.realKan !== 'skip') base.realKan = d.realKan; else base.realKan ??= d.realKan;
+      decisions.set(key, base);
+    }
+    for (const c of x.kyoku.calls ?? []) {
+      const key = `${c.seat}-${c.from}-${c.discardIndex}`;
+      const cur = calls.get(key);
+      const base: NagaCall = cur ?? { ...c, opts: [] };
+      base.opts = pad(c.opts, null, off, len, cur ? base.opts : undefined);
+      if (c.real !== 'skip') base.real = c.real;
+      calls.set(key, base);
+    }
+    off += len;
+  }
+  // 足りない分（後から足したタイプにしか無い局面）を埋める
+  for (const d of decisions.values()) {
+    for (let i = 0; i < n; i++) { d.pred[i] ??= null; d.realP[i] ??= null; d.top[i] ??= []; d.riichi[i] ??= null; d.dist![i] ??= {}; d.kan![i] ??= null; }
+    if (!d.kan!.some(Boolean)) delete d.kan;
+  }
+  for (const c of calls.values()) for (let i = 0; i < n; i++) c.opts[i] ??= null;
+  const first = list[0];
+  return { ...first, reportId: list.map((x) => x.reportId).join('+'), types, kyoku: { ...first.kyoku, decisions: [...decisions.values()].sort((a, b) => a.discardIndex - b.discardIndex || a.seat - b.seat), calls: [...calls.values()] } };
+}

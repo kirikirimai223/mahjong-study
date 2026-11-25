@@ -37,3 +37,10 @@ describe('既にある牌譜の取り込み', () => {
     expect(rows[0].naga?.kyoku.decisions).toHaveLength(40);
   });
 });
+
+describe('極雀のURL', () => {
+  it('解析結果のURLを読み取る', async () => {
+    const { parseSources } = await import('../src/lib/importTenhou');
+    expect(parseSources('https://gokujan.com/review/ffabe0c7f802aa73')).toEqual([{ kind: 'gokujan', id: 'ffabe0c7f802aa73', url: 'https://gokujan.com/review/ffabe0c7f802aa73' }]);
+  });
+});

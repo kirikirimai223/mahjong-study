@@ -26,18 +26,18 @@ async def main():
         out['review'] = 'まだ取り込まれていません' in none_txt and len(db['study_ai_reviews']) == 1 and db['study_ai_reviews'][0]['naga']['reportId'] == RID
         # 2. 勉強会の画面：半荘ごとに貼る（同じレポートなら置き換えて増えない）
         await pg.click('text=← 勉強会'); await pg.wait_for_selector('.game')
-        await pg.click('.game button:has-text("NAGAの結果を取り込む")')
+        await pg.click('.game button:has-text("AI解析（NAGA・極雀）を取り込む")')
         await pg.fill('.naga-import input[type=url]', URL); await pg.click('.naga-import button:has-text("取り込む")')
-        await pg.wait_for_selector('.toast:has-text("NAGAの結果")')
+        await pg.wait_for_selector('.toast:has-text("解析結果")')
         toast = await pg.inner_text('.toast')
-        out['game'] = '1局にNAGAの結果' in toast and len(db['study_ai_reviews']) == 1
+        out['game'] = '1局に解析結果' in toast and len(db['study_ai_reviews']) == 1
         # 3. 牌譜がもうある勉強会に、取り込み欄からNAGAのレポートを貼る → 半荘は増やさず、結果だけ付け直す
         db['study_ai_reviews'].clear()
         await pg.fill('details.import textarea', URL)
         await pg.click('details.import button:has-text("取り込む")')
         await pg.wait_for_selector('.toast:has-text("もうこの勉強会にあった")')
         t3 = await pg.inner_text('.toast')
-        out['reuse'] = len(db['study_games']) == 1 and len(db['study_rounds']) == 1 and len(db['study_ai_reviews']) == 1 and 'NAGAの結果を1局に付けました' in t3
+        out['reuse'] = len(db['study_games']) == 1 and len(db['study_rounds']) == 1 and len(db['study_ai_reviews']) == 1 and 'AIの解析結果を1局に付けました' in t3
         out['errors'] = errs
         await b.close()
     print(json.dumps({'ok': all(v is True for k, v in out.items() if k != 'errors') and not out['errors'], **out, 'toast': toast}, ensure_ascii=False))

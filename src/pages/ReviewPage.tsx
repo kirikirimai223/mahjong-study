@@ -7,7 +7,7 @@ import { useMember } from '../lib/auth';
 import { roundLabelOf, type RoundRow } from '../lib/data';
 import { Tile, useTileCss } from '../lib/tiles';
 import { useConfirm } from '../lib/useConfirm';
-import { ACTION_NAME, bestOf, callMiss, decisionMisses, mjaiTile, type NagaCall, type NagaDecision } from '../lib/naga';
+import { ACTION_NAME, bestOf, callMiss, decisionMisses, mergeNaga, mjaiTile, type NagaCall, type NagaDecision } from '../lib/naga';
 import type { StoredNaga } from './Reviews';
 import { NagaHand, ReviewTable } from './ReviewTable';
 import { NagaImport } from './SessionDetail';
@@ -40,8 +40,11 @@ export function ReviewPage() {
   const [nagaMsg, setNagaMsg] = useState('');
   // 取り込んだNAGAの結果（いちばん新しいもの）
   const loadNaga = useCallback(async () => {
-    const ai = await supabase.from('study_ai_reviews').select('naga, created_at').eq('round_id', id!).not('naga', 'is', null).order('created_at', { ascending: false }).limit(1);
-    setNaga(ai.data?.[0] ? (ai.data[0].naga as StoredNaga) : null);
+    // NAGA・極雀など、取り込んだ解析をすべて並べる（同じレポートは新しい方だけ）
+    const ai = await supabase.from('study_ai_reviews').select('naga, created_at').eq('round_id', id!).not('naga', 'is', null).order('created_at', { ascending: false });
+    const seen = new Set<string>();
+    const list = (ai.data ?? []).map((x) => x.naga as StoredNaga).filter((x) => x && !seen.has(x.reportId) && !!seen.add(x.reportId)).reverse();
+    setNaga(mergeNaga(list));
   }, [id]);
   const loadNotes = useCallback(async () => {
     const [p, c] = await Promise.all([
@@ -185,7 +188,7 @@ export function ReviewPage() {
             view={viewOf(cur)} naga={nagaOf.get(posKey(cur.seat, cur.discardIndex))} nagaType={nagaType} />
           {!naga && (
             <details className="card naga-none" open={!!nagaMsg}>
-              <summary><b>NAGAの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてレポートのURLを貼る）</small></summary>
+              <summary><b>AIの評価</b> <small className="quiet">この局にはまだ取り込まれていません（開いてNAGA・極雀のURLを貼る）</small></summary>
               <NagaImport rounds={gameRounds.length ? gameRounds : [{ id: id!, kyoku: round!.kyoku, honba: round!.honba }]} onDone={(m) => { setNagaMsg(m); loadNaga(); }} />
               {nagaMsg && <p className="small">{nagaMsg}</p>}
             </details>
@@ -242,7 +245,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
   return (
     <div className="card naga compact">
       <div className="naga-head">
-        <b>NAGA</b>
+        <b>AI解析</b>
         {decision && <span className="real">実際 <MTile p={decision.real} /></span>}
         <select value={type} onChange={(e) => setType(Number(e.target.value))} aria-label="基準のタイプ">
           {naga.types.map((t, i) => <option key={i} value={i}>基準：{t}</option>)}
@@ -254,6 +257,9 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
           {naga.types.map((t, ti) => {
             const miss = decisionMisses(decision, ti);
             const ok = miss.length === 0;
+            if (decision.pred[ti] == null && decision.top[ti].length === 0 && decision.riichi[ti] == null) {
+              return <div key={ti} className={`naga-row ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className="mark">―</span><span className="quiet">この家は解析していません</span><span /></div>;
+            }
             return (
               <div key={ti} className={`naga-row ${ok ? 'ok' : 'ng'} ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}>
                 <span className="nm">{t}</span>
@@ -267,7 +273,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             );
           })}
         </div>
-      ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはNAGAの評価がありません（打牌が1つしか選べない局面など）'}</p>}
+      ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはAIの評価がありません（解析していない家か、打牌が1つしか選べない局面など）'}</p>}
       {decision && hasRiichi && (
         <div className="naga-sub">
           <div className="sub-head"><b>立直判断</b><span>実際：{decision.realRiichi ? '立直した' : '立直しない'}</span></div>
