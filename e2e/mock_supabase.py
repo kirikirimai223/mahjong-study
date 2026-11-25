@@ -17,11 +17,14 @@ def filt(rows, params):
         if k in ('select', 'order', 'limit', 'columns'): continue
         op, _, val = v.partition('.')
         if op == 'eq': rows = [r for r in rows if str(r.get(k)) == val]
+        elif op == 'not' and val == 'is.null': rows = [r for r in rows if r.get(k) is not None]
+        elif op == 'is' and val == 'null': rows = [r for r in rows if r.get(k) is None]
         elif op == 'in': vals = [x.strip('"') for x in val.strip('()').split(',')]; rows = [r for r in rows if str(r.get(k)) in vals]
     if 'order' in params:
         for part in reversed(params['order'].split(',')):
             col, *rest = part.split('.')
             rows = sorted(rows, key=lambda r: (r.get(col) is None, str(r.get(col))), reverse='desc' in rest)
+    if 'limit' in params: rows = rows[:int(params['limit'])]
     return rows
 def pick(rows, sel):
     if not sel or sel == '*': return rows
@@ -55,6 +58,7 @@ async def handle(route):
             if m.group(1) == 'study_rounds': r.setdefault('tenhou_json', None); r.setdefault('randomized_seats', [])
             if m.group(1) == 'study_sessions': r.setdefault('participants', []); r.setdefault('note', '')
             if m.group(1) == 'study_comments': r.setdefault('author_id', ME); r.setdefault('tags', []); r.setdefault('speaker', '')
+            if m.group(1) == 'study_ai_reviews': r.setdefault('naga', None)
             if m.group(1) == 'study_positions': r.setdefault('conclusion', ''); r.setdefault('conclusion_by', None)
             t.append(r); out.append(r)
         return await reply(pick(out, params.get('select')), 201)

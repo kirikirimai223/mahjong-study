@@ -139,7 +139,7 @@ export function RoundPage() {
         <button className="primary" onClick={goNext} disabled={busy || !round?.game_id}>次の局へ</button>
       </div>
       {err && <main><p className="bad">{err}</p></main>}
-      {showReviews && round && <div className="round-extra"><Reviews roundId={round.id} copyUrl={copyNagaUrl} /></div>}
+      {showReviews && round && <div className="round-extra"><Reviews roundId={round.id} kyoku={round.kyoku} honba={round.honba} copyUrl={copyNagaUrl} /></div>}
       <div ref={host} />
     </div>
   );
