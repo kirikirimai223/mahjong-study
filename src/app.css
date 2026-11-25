@@ -194,3 +194,8 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .naga.compact .chips { gap:4px; }
 .naga.compact .chips .chip { padding:2px 8px; font-size:12px; }
 .rv-top { scroll-margin-top:56px; }
+.naga-sub { border-top:1px dashed var(--line); padding-top:3px; }
+.naga-sub .sub-head { display:flex; align-items:center; gap:8px; font-size:12px; flex-wrap:wrap; }
+.naga-sub .sub-head span { display:inline-flex; align-items:center; gap:2px; color:var(--quiet, #555); }
+.naga-sub .sub-head .tile { --tw: 14px; }
+.naga-row.sub { grid-template-columns:4.6em 2.6em 1fr auto; border-top:none; }

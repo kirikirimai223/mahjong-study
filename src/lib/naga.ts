@@ -39,8 +39,36 @@ export type NagaDecision = {
   riichi: (number | null)[];
   /** タイプごとの、牌ごとの評価（0.5%以上。赤五は普通の五にまとめる）。前の版で取り込んだものには無い */
   dist?: Record<string, number>[];
+  /** 実際に立直したか */
+  realRiichi?: boolean;
+  /** タイプごとの、槓の判断（skip・ankan・kakan の評価 0〜1）。槓できる局面だけ */
+  kan?: (Record<string, number> | null)[];
+  /** 実際の槓（しなければ skip） */
+  realKan?: string;
 };
-export type NagaKyoku = { kyoku: number; honba: number; decisions: NagaDecision[] };
+/** 打牌に対する、ほかの家の鳴きの判断 */
+export type NagaCall = {
+  /** 鳴ける家 */
+  seat: number;
+  /** 打牌した家と、その家の何打目か（振り返りの局面と同じ） */
+  from: number;
+  discardIndex: number;
+  tile: string;
+  /** タイプごとの評価（skip・chi_low・chi_mid・chi_high・pon・daiminkan の 0〜1） */
+  opts: (Record<string, number> | null)[];
+  /** 実際にしたこと */
+  real: string;
+};
+export type NagaKyoku = { kyoku: number; honba: number; decisions: NagaDecision[]; calls?: NagaCall[] };
+
+/** 鳴き・槓の判断の名前 */
+export const ACTION_NAME: Record<string, string> = { skip: 'スルー', chi_low: 'チー（下）', chi_mid: 'チー（嵌）', chi_high: 'チー（上）', pon: 'ポン', daiminkan: '明槓', ankan: '暗槓', kakan: '加槓' };
+const HURO_KEY: Record<string, string> = { 0: 'skip', 1: 'chi_low', 2: 'chi_mid', 3: 'chi_high', 4: 'pon', 5: 'daiminkan' };
+const KAN_KEY: Record<string, string> = { 0: 'skip', 1: 'ankan', 2: 'kakan' };
+const toOpts = (o: Record<string, number> | null | undefined, names: Record<string, string>) =>
+  o ? Object.fromEntries(Object.entries(o).map(([k, v]) => [names[k] ?? k, Math.round((v / 10000) * 1000) / 1000])) : null;
+/** いちばん評価の高い選択 */
+export const bestOf = (o: Record<string, number> | null | undefined) => (o ? Object.entries(o).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null : null);
 export type NagaSummary = { reportId: string; types: string[]; kyokus: NagaKyoku[] };
 
 /** 解析一覧・レポート画面のURLから report_id を取り出す */
@@ -50,7 +78,9 @@ export function nagaReportId(url: string): string | null {
 }
 
 type Entry = {
-  info: { msg: { type: string; actor?: number; pai?: string; bakaze?: string; kyoku?: number; honba?: number; real_dahai?: string; pred_dahai?: (string | null)[] } };
+  huro?: Record<string, (Record<string, number> | null)[]>;
+  kan?: (Record<string, number> | null)[];
+  info: { msg: { type: string; actor?: number; target?: number; consumed?: string[]; pai?: string; bakaze?: string; kyoku?: number; honba?: number; real_dahai?: string; pred_dahai?: (string | null)[] } };
   dahai_pred?: (number[] | null)[];
   dahai_detail?: (number[][] | null)[];
   reach?: (number | null)[];
@@ -94,12 +124,28 @@ export function extractNaga(report: Report, reportId: string): NagaSummary {
     const start = entries[0]?.info.msg;
     if (!start || start.type !== 'start_kyoku') continue;
     const ba = ['E', 'S', 'W', 'N'].indexOf(start.bakaze ?? 'E');
-    const kyoku: NagaKyoku = { kyoku: ba * 4 + ((start.kyoku ?? 1) - 1), honba: start.honba ?? 0, decisions: [] };
+    const kyoku: NagaKyoku = { kyoku: ba * 4 + ((start.kyoku ?? 1) - 1), honba: start.honba ?? 0, decisions: [], calls: [] };
     const count = [0, 0, 0, 0];
     const pending: (NagaDecision | null)[] = [null, null, null, null];
+    // 槓をした局面の判断は、嶺上牌をツモった後の打牌の判断に付けて残す
+    const carry: ({ kan: (Record<string, number> | null)[]; realKan: string } | null)[] = [null, null, null, null];
+    let calls: NagaCall[] = []; // 直前の打牌に対する鳴きの判断（次の出来事で、したかどうかが決まる）
+    const closeCalls = (m: Entry['info']['msg']) => {
+      for (const c of calls) {
+        if ((m.type === 'chi' || m.type === 'pon' || m.type === 'daiminkan') && m.actor === c.seat) c.real = m.type === 'chi' ? chiKind(m.pai ?? '', m.consumed ?? []) : m.type;
+        kyoku.calls!.push(c);
+      }
+      calls = [];
+    };
     for (const e of entries.slice(1)) {
       const m = e.info.msg;
       const actor = m.actor ?? -1;
+      if (calls.length && m.type !== 'reach_accepted' && m.type !== 'dora') closeCalls(m);
+      if (m.type === 'reach' && pending[actor]) pending[actor]!.realRiichi = true;
+      if ((m.type === 'ankan' || m.type === 'kakan') && pending[actor]) {
+        carry[actor] = { kan: pending[actor]!.kan ?? [], realKan: m.type };
+        pending[actor] = null;
+      }
       if ((m.type === 'tsumo' || m.type === 'chi' || m.type === 'pon') && (e.dahai_pred || e.dahai_detail)) {
         const pred = keys.map((_, ti) => m.pred_dahai?.[ti] ?? null);
         const dists = keys.map((_, ti) => distribution(e, ti));
@@ -112,6 +158,8 @@ export function extractNaga(report: Report, reportId: string): NagaSummary {
         };
         // 評価の分布は実際の打牌の評価を出すのにだけ使う
         (pending[actor] as NagaDecision & { _d?: (Map<string, number> | null)[] })._d = dists;
+        if (e.kan) { pending[actor]!.kan = e.kan.map((o) => toOpts(o, KAN_KEY)); pending[actor]!.realKan = 'skip'; }
+        if (carry[actor]) { pending[actor]!.kan = carry[actor]!.kan; pending[actor]!.realKan = carry[actor]!.realKan; carry[actor] = null; }
       } else if (m.type === 'dahai' && actor >= 0) {
         const d = pending[actor] as (NagaDecision & { _d?: (Map<string, number> | null)[] }) | null;
         if (d) {
@@ -121,9 +169,14 @@ export function extractNaga(report: Report, reportId: string): NagaSummary {
           kyoku.decisions.push(d);
         }
         pending[actor] = null;
+        // この打牌に対する、ほかの家の鳴きの判断
+        for (const [seat, per] of Object.entries(e.huro ?? {})) {
+          calls.push({ seat: Number(seat), from: actor, discardIndex: count[actor], tile: m.pai ?? '', opts: keys.map((_, ti) => toOpts(per[ti], HURO_KEY)), real: 'skip' });
+        }
         count[actor]++;
       }
     }
+    if (calls.length) closeCalls({ type: 'end' });
     kyokus.push(kyoku);
   }
   return { reportId, types, kyokus };
@@ -182,3 +235,24 @@ export async function attachNagaToRounds(reportUrl: string, rounds: { id: string
   return { attached, unmatched, types: sum.types };
 }
 const kyokuName = (k: number, h: number) => `${['東', '南', '西', '北'][Math.floor(k / 4)]}${(k % 4) + 1}局${h ? `${h}本場` : ''}`;
+
+/** チーの形：鳴いた牌が順子のいちばん下・真ん中・上のどれか */
+function chiKind(pai: string, consumed: string[]) {
+  const n = Number(pai[0]);
+  const ns = consumed.map((c) => Number(c[0]));
+  if (n < Math.min(...ns)) return 'chi_low';
+  if (n > Math.max(...ns)) return 'chi_high';
+  return 'chi_mid';
+}
+
+/** そのタイプの判断と実際が違うところ（打牌・立直・槓）。違うものの名前を返す */
+export function decisionMisses(d: NagaDecision, ti: number): string[] {
+  const out: string[] = [];
+  if (!agrees(d, ti)) out.push('打牌');
+  const r = d.riichi[ti];
+  if (r != null && (r >= 0.5) !== !!d.realRiichi) out.push('立直');
+  const k = d.kan?.[ti];
+  if (k && bestOf(k) !== (d.realKan ?? 'skip')) out.push('槓');
+  return out;
+}
+export const callMiss = (c: NagaCall, ti: number) => { const b = bestOf(c.opts[ti]); return b != null && b !== c.real; };

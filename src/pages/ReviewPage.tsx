@@ -7,7 +7,7 @@ import { useMember } from '../lib/auth';
 import { roundLabelOf, type RoundRow } from '../lib/data';
 import { Tile, useTileCss } from '../lib/tiles';
 import { useConfirm } from '../lib/useConfirm';
-import { agrees, mjaiTile, type NagaDecision } from '../lib/naga';
+import { ACTION_NAME, bestOf, callMiss, decisionMisses, mjaiTile, type NagaCall, type NagaDecision } from '../lib/naga';
 import type { StoredNaga } from './Reviews';
 import { NagaHand, ReviewTable } from './ReviewTable';
 import { NagaImport } from './SessionDetail';
@@ -129,6 +129,19 @@ export function ReviewPage() {
     for (const d of naga?.kyoku.decisions ?? []) map.set(posKey(d.seat, d.discardIndex), d);
     return map;
   }, [naga]);
+  // 打牌（家-何打目）ごとの、ほかの家の鳴きの判断
+  const callsOf = useMemo(() => {
+    const map = new Map<string, NagaCall[]>();
+    for (const c of naga?.kyoku.calls ?? []) { const k = posKey(c.from, c.discardIndex); map.set(k, [...(map.get(k) ?? []), c]); }
+    return map;
+  }, [naga]);
+  /** その局面で、基準のタイプと違ったこと（打牌・立直・槓・鳴き） */
+  const missesAt = (f: ReplayFrame, ti: number) => {
+    const d = nagaOf.get(posKey(f.seat, f.discardIndex));
+    const out = d ? decisionMisses(d, ti) : [];
+    if ((callsOf.get(posKey(f.seat, f.discardIndex)) ?? []).some((c) => callMiss(c, ti))) out.push('鳴き');
+    return out;
+  };
   const names = round?.editor.names ?? ['', '', '', ''];
   // 手前に置く家：NAGAの結果があれば打牌した家（その手牌の下に評価の棒が出る）、なければ選んだ家か自家
   const viewMode: number | 'follow' = viewSeat ?? (seatFilter !== 'all' ? seatFilter : naga ? 'follow' : round?.editor.me ?? 0);
@@ -180,8 +193,8 @@ export function ReviewPage() {
           {naga && nagaMsg && <p className="small">{nagaMsg}</p>}
           {naga && (
             <NagaPanel naga={naga} frame={cur} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
-              showHand={viewOf(cur) !== cur.seat}
-              mismatches={frames.map((f, i) => ({ f, i })).filter(({ f }) => (seatFilter === 'all' || f.seat === seatFilter) && (() => { const d = nagaOf.get(posKey(f.seat, f.discardIndex)); return d && !agrees(d, nagaType); })())}
+              showHand={viewOf(cur) !== cur.seat} calls={callsOf.get(posKey(cur.seat, cur.discardIndex)) ?? []}
+              mismatches={frames.map((f, i) => ({ f, i, m: missesAt(f, nagaType) })).filter(({ f, m }) => (seatFilter === 'all' || f.seat === seatFilter || (m.includes('鳴き') && (callsOf.get(posKey(f.seat, f.discardIndex)) ?? []).some((c) => c.seat === seatFilter))) && m.length > 0)}
               names={names} curIndex={curIndex} go={go} />
           )}
           {commentCount.size > 0 && (
@@ -219,10 +232,13 @@ function MTile({ p, cls = 'sm' }: { p: string | null; cls?: string }) {
 }
 
 /** NAGAの推奨と実際の打牌を並べる（卓と一緒に1画面に収まるよう、タイプごとに1行）。違う打牌の局面へも飛べる */
-function NagaPanel({ naga, frame, decision, type, setType, showHand, mismatches, names, curIndex, go }: {
+function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mismatches, names, curIndex, go }: {
   naga: StoredNaga; frame: ReplayFrame; decision: NagaDecision | undefined; type: number; setType: (n: number) => void; showHand: boolean;
-  mismatches: { f: ReplayFrame; i: number }[]; names: string[]; curIndex: number; go: (i: number) => void;
+  calls: NagaCall[]; mismatches: { f: ReplayFrame; i: number; m: string[] }[]; names: string[]; curIndex: number; go: (i: number) => void;
 }) {
+  const hasRiichi = !!decision && decision.riichi.some((r) => r != null);
+  const hasKan = !!decision?.kan?.some((k) => k);
+  const opts = (o: Record<string, number> | null) => (o ? Object.entries(o).filter(([, p]) => p >= 0.005).sort((a, b) => b[1] - a[1]) : []);
   return (
     <div className="card naga compact">
       <div className="naga-head">
@@ -236,26 +252,60 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, mismatches,
       {decision ? (
         <div className="naga-rows">
           {naga.types.map((t, ti) => {
-            const ok = agrees(decision, ti);
+            const miss = decisionMisses(decision, ti);
+            const ok = miss.length === 0;
             return (
               <div key={ti} className={`naga-row ${ok ? 'ok' : 'ng'} ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}>
                 <span className="nm">{t}</span>
-                <span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span>
+                <span className={`mark ${ok ? 'ok' : 'ng'}`} title={miss.join('・')}>{ok ? '一致' : miss.length === 1 && miss[0] !== '打牌' ? `${miss[0]}違う` : '違う'}</span>
                 <span className="cands">
                   {decision.top[ti].map((c) => <span key={c.tile} className={`cand ${c.tile.replace(/r$/, '') === decision.real.replace(/r$/, '') ? 'is-real' : ''}`}><MTile p={c.tile} />{pct(c.p)}</span>)}
                   {decision.top[ti].length === 0 && <span className="quiet">―</span>}
                 </span>
-                <span className="rp">実際{pct(decision.realP[ti])}{decision.riichi[ti] != null ? `・立直${pct(decision.riichi[ti])}` : ''}</span>
+                <span className="rp">実際{pct(decision.realP[ti])}</span>
               </div>
             );
           })}
         </div>
       ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはNAGAの評価がありません（打牌が1つしか選べない局面など）'}</p>}
+      {decision && hasRiichi && (
+        <div className="naga-sub">
+          <div className="sub-head"><b>立直判断</b><span>実際：{decision.realRiichi ? '立直した' : '立直しない'}</span></div>
+          {naga.types.map((t, ti) => {
+            const r = decision.riichi[ti];
+            if (r == null) return null;
+            const ok = (r >= 0.5) === !!decision.realRiichi;
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>立直 {pct(r)}・しない {pct(1 - r)}</span><span /></div>;
+          })}
+        </div>
+      )}
+      {decision && hasKan && (
+        <div className="naga-sub">
+          <div className="sub-head"><b>槓の判断</b><span>実際：{ACTION_NAME[decision.realKan ?? 'skip']}</span></div>
+          {naga.types.map((t, ti) => {
+            const k = decision.kan?.[ti];
+            if (!k) return null;
+            const ok = bestOf(k) === (decision.realKan ?? 'skip');
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(k).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
+          })}
+        </div>
+      )}
+      {calls.map((c) => (
+        <div key={c.seat} className="naga-sub">
+          <div className="sub-head"><b>{names[c.seat]}の鳴き判断</b><span>（この<MTile p={c.tile} />に）実際：{ACTION_NAME[c.real] ?? c.real}</span></div>
+          {naga.types.map((t, ti) => {
+            const o = c.opts[ti];
+            if (!o) return null;
+            const ok = !callMiss(c, ti);
+            return <div key={ti} className={`naga-row sub ${ti === type ? 'base' : ''}`} onClick={() => setType(ti)}><span className="nm">{t}</span><span className={`mark ${ok ? 'ok' : 'ng'}`}>{ok ? '一致' : '違う'}</span><span>{opts(o).map(([a, p]) => `${ACTION_NAME[a] ?? a} ${pct(p)}`).join('・')}</span><span /></div>;
+          })}
+        </div>
+      ))}
       {mismatches.length > 0 && (
         <div className="chips">
           <small className="quiet">{naga.types[type]}と違う打牌（{mismatches.length}）：</small>
-          {mismatches.map(({ f, i }) => (
-            <button key={i} className={`chip ${i === curIndex ? 'on' : ''}`} onClick={() => go(i)}>{names[f.seat]} {f.discardIndex + 1}打目</button>
+          {mismatches.map(({ f, i, m }) => (
+            <button key={i} className={`chip ${i === curIndex ? 'on' : ''}`} onClick={() => go(i)}>{names[f.seat]} {f.discardIndex + 1}打目{m.some((x) => x !== '打牌') ? `（${m.filter((x) => x !== '打牌').join('・')}）` : ''}</button>
           ))}
         </div>
       )}
