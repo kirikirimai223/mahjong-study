@@ -51,7 +51,7 @@ function callName(a: Action): string | null {
 export function extractGokujan(res: GokujanResult, id: string): NagaSummary {
   const { data } = res;
   const me = data.player_id;
-  const type = `極雀${res.modelName ? ` ${res.modelName}` : ''}`;
+  const type = res.modelName || '極雀';
   // Mjai の出来事を局ごとに分ける
   const games: Mjai[][] = [];
   for (const m of data.mjai_log) {

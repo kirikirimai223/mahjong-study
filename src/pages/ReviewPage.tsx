@@ -44,7 +44,8 @@ export function ReviewPage() {
     const ai = await supabase.from('study_ai_reviews').select('naga, created_at').eq('round_id', id!).not('naga', 'is', null).order('created_at', { ascending: false });
     const seen = new Set<string>();
     const list = (ai.data ?? []).map((x) => x.naga as StoredNaga).filter((x) => x && !seen.has(x.reportId) && !!seen.add(x.reportId)).reverse();
-    setNaga(mergeNaga(list));
+    // 極雀はモデル名だけで表示する（前に「極雀 …」で取り込んだものも）
+    setNaga(mergeNaga(list.map((x) => ({ ...x, types: x.types.map((t) => t.replace(/^極雀 /, '')) }))));
   }, [id]);
   const loadNotes = useCallback(async () => {
     const [p, c] = await Promise.all([
@@ -97,8 +98,21 @@ export function ReviewPage() {
     } catch (e) { return { error: (e as Error).message }; }
   }, [round]);
 
+  const nagaOf = useMemo(() => {
+    const map = new Map<string, NagaDecision>();
+    for (const d of naga?.kyoku.decisions ?? []) map.set(posKey(d.seat, d.discardIndex), d);
+    return map;
+  }, [naga]);
+  // 打牌（家-何打目）ごとの、ほかの家の鳴きの判断
+  const callsOf = useMemo(() => {
+    const map = new Map<string, NagaCall[]>();
+    for (const c of naga?.kyoku.calls ?? []) { const k = posKey(c.from, c.discardIndex); map.set(k, [...(map.get(k) ?? []), c]); }
+    return map;
+  }, [naga]);
   const frames = replay && 'frames' in replay ? replay.frames! : [];
-  const shown = frames.map((f, i) => ({ f, i })).filter(({ f }) => seatFilter === 'all' || f.seat === seatFilter);
+  // 1人に絞ったときは、その家の打牌に加えて、その家が鳴ける（鳴き・ロンの判断がある）ほかの家の打牌でも止まる
+  const callFor = (f: ReplayFrame, seat: number) => !f.end && (callsOf.get(posKey(f.seat, f.discardIndex)) ?? []).some((c) => c.seat === seat);
+  const shown = frames.map((f, i) => ({ f, i })).filter(({ f }) => seatFilter === 'all' || f.seat === seatFilter || callFor(f, seatFilter));
   // 局面は URL の ?p=家-何打目 で持つ（その局面へのリンクを共有できる）
   const indexOf = (q: string | null) => {
     if (q) { const [s, d] = q.split('-').map(Number); const i = frames.findIndex((f) => f.seat === s && f.discardIndex === d); if (i >= 0) return i; }
@@ -127,17 +141,6 @@ export function ReviewPage() {
     return byPos;
   }, [comments, positions]);
 
-  const nagaOf = useMemo(() => {
-    const map = new Map<string, NagaDecision>();
-    for (const d of naga?.kyoku.decisions ?? []) map.set(posKey(d.seat, d.discardIndex), d);
-    return map;
-  }, [naga]);
-  // 打牌（家-何打目）ごとの、ほかの家の鳴きの判断
-  const callsOf = useMemo(() => {
-    const map = new Map<string, NagaCall[]>();
-    for (const c of naga?.kyoku.calls ?? []) { const k = posKey(c.from, c.discardIndex); map.set(k, [...(map.get(k) ?? []), c]); }
-    return map;
-  }, [naga]);
   /** その局面で、基準のタイプと違ったこと（打牌・立直・槓・鳴き） */
   const missesAt = (f: ReplayFrame, ti: number) => {
     const d = nagaOf.get(posKey(f.seat, f.discardIndex));
@@ -168,7 +171,7 @@ export function ReviewPage() {
               <button onClick={() => step(-1)} disabled={shownPos <= 0} aria-label="前">◀</button>
               <div className="rv-title">
                 <b>{cur.end ? endTitle(cur, names) : `${WIND[(cur.seat - replay.log!.setup.kyoku % 4 + 4) % 4]}家 ${names[cur.seat]}・${cur.discardIndex + 1}打目`}</b>
-                <small className="quiet">{cur.end ? cur.end.points : cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}</small>
+                <small className="quiet">{cur.end ? cur.end.points : cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}{seatFilter !== 'all' && cur.seat !== seatFilter && callFor(cur, seatFilter) ? `・${names[seatFilter]}の鳴き判断` : ''}</small>
               </div>
               <button onClick={() => step(1)} disabled={shownPos >= shown.length - 1} aria-label="次">▶</button>
             </div>
@@ -195,8 +198,8 @@ export function ReviewPage() {
           )}
           {naga && nagaMsg && <p className="small">{nagaMsg}</p>}
           {naga && (
-            <NagaPanel naga={naga} frame={cur} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
-              showHand={viewOf(cur) !== cur.seat} calls={callsOf.get(posKey(cur.seat, cur.discardIndex)) ?? []}
+            <NagaPanel naga={naga} frame={cur} decision={seatFilter !== 'all' && cur.seat !== seatFilter ? undefined : nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
+              showHand={viewOf(cur) !== cur.seat} calls={(callsOf.get(posKey(cur.seat, cur.discardIndex)) ?? []).filter((c) => seatFilter === 'all' || cur.seat === seatFilter || c.seat === seatFilter)}
               mismatches={frames.map((f, i) => ({ f, i, m: missesAt(f, nagaType) })).filter(({ f, m }) => (seatFilter === 'all' || f.seat === seatFilter || (m.includes('鳴き') && (callsOf.get(posKey(f.seat, f.discardIndex)) ?? []).some((c) => c.seat === seatFilter))) && m.length > 0)}
               names={names} curIndex={curIndex} go={go} />
           )}
@@ -273,7 +276,7 @@ function NagaPanel({ naga, frame, decision, type, setType, showHand, calls, mism
             );
           })}
         </div>
-      ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはAIの評価がありません（解析していない家か、打牌が1つしか選べない局面など）'}</p>}
+      ) : calls.length > 0 ? null : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはAIの評価がありません（解析していない家か、打牌が1つしか選べない局面など）'}</p>}
       {decision && hasRiichi && (
         <div className="naga-sub">
           <div className="sub-head"><b>立直判断</b><span>実際：{decision.realRiichi ? '立直した' : '立直しない'}</span></div>

@@ -21,7 +21,7 @@ describe('極雀の解析結果の読み取り', () => {
   });
   it('解析した家の判断が、打牌・鳴きにもれなく対応する', () => {
     const s = extractGokujan(res, 'ffabe0c7f802aa73');
-    expect(s.types).toEqual(['極雀 RIGEL 1.3']);
+    expect(s.types).toEqual(['RIGEL 1.3']);
     expect(s.kyokus).toHaveLength(10);
     const me = res.data.player_id;
     let dahai = 0; let calls = 0;
@@ -64,7 +64,7 @@ describe('NAGAと極雀を並べる', () => {
     const k = g.kyokus[0];
     const fakeNaga = { reportId: 'n', types: ['ニシキ'], kyoku: { ...k, decisions: [{ ...k.decisions[0], pred: ['1m'] }, { ...k.decisions[0], seat: 0, discardIndex: 0 }], calls: [] } };
     const m = mergeNaga([fakeNaga, { reportId: g.reportId, types: g.types, kyoku: k }])!;
-    expect(m.types).toEqual(['ニシキ', '極雀 RIGEL 1.3']);
+    expect(m.types).toEqual(['ニシキ', 'RIGEL 1.3']);
     const mine = m.kyoku.decisions.find((d) => d.seat === k.decisions[0].seat && d.discardIndex === 0)!;
     expect(mine.pred).toEqual(['1m', k.decisions[0].pred[0]]);
     const other = m.kyoku.decisions.find((d) => d.seat === 0)!;

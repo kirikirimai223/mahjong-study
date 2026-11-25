@@ -23,13 +23,27 @@ async def main():
         r0 = next(x for x in db['study_rounds'] if x['kyoku'] == 0 and x['honba'] == 0)
         await pg.goto(f'http://localhost:5173/rounds/{r0["id"]}/review'); await pg.wait_for_selector('.naga')
         txt = await pg.inner_text('.naga')
-        out['types'] = '極雀 RIGEL 1.3' in txt
+        out['types'] = 'RIGEL 1.3' in txt
         out['mismatch_chips'] = await pg.locator('.naga .chips .chip').count()
         out['has_mismatch'] = out['mismatch_chips'] >= 2
         # 違う打牌の局面へ飛ぶと、鳴き判断（北のポン）か打牌の評価が出る
         await pg.locator('.naga .chips .chip').first.click(); await pg.wait_for_timeout(300)
-        out['jump'] = '極雀' in await pg.inner_text('.naga')
+        out['jump'] = 'RIGEL' in await pg.inner_text('.naga')
+        # 北家（D）だけに絞ると、ほかの家の打牌でも D が鳴ける局面で止まり、D の鳴き判断だけが出る
+        await pg.goto(f'http://localhost:5173/rounds/{r0["id"]}/review'); await pg.wait_for_selector('.naga')
+        await pg.select_option('.rv-opts select >> nth=0', '3'); await pg.wait_for_timeout(300)
+        seen = []
+        for _ in range(40):
+            head = await pg.inner_text('.rv-top')
+            if 'Dの鳴き判断' in head:
+                t = await pg.inner_text('.naga')
+                seen.append(('Dの鳴き判断' in t, 'ポン' in t or 'スルー' in t or 'チー' in t or 'ロン' in t, 'Aの鳴き判断' not in t and 'Bの鳴き判断' not in t))
+            nxt = pg.locator('button[aria-label="次"]')
+            if await nxt.is_disabled(): break
+            await nxt.click(); await pg.wait_for_timeout(120)
+        out['call_stops'] = seen
+        out['call_ok'] = len(seen) >= 3 and all(all(x) for x in seen)
         out['errors'] = errs
         await b.close()
-    print(json.dumps({'ok': all(v is True for k, v in out.items() if k in ('saved', 'types', 'has_mismatch', 'jump')) and not out['errors'], **out}, ensure_ascii=False))
+    print(json.dumps({'ok': all(v is True for k, v in out.items() if k in ('saved', 'types', 'has_mismatch', 'jump', 'call_ok')) and not out['errors'], **out}, ensure_ascii=False))
 asyncio.run(main())
