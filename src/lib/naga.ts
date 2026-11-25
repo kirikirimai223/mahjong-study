@@ -37,6 +37,8 @@ export type NagaDecision = {
   top: NagaCandidate[][];
   /** タイプごとの、立直する評価（0〜1。立直できない局面は null） */
   riichi: (number | null)[];
+  /** タイプごとの、牌ごとの評価（0.5%以上。赤五は普通の五にまとめる）。前の版で取り込んだものには無い */
+  dist?: Record<string, number>[];
 };
 export type NagaKyoku = { kyoku: number; honba: number; decisions: NagaDecision[] };
 export type NagaSummary = { reportId: string; types: string[]; kyokus: NagaKyoku[] };
@@ -106,6 +108,7 @@ export function extractNaga(report: Report, reportId: string): NagaSummary {
           realP: [], // 実際の打牌が分かってから埋める
           top: dists.map((d) => (d ? [...d].filter(([, p]) => p >= 0.05).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([tile, p]) => ({ tile, p: Math.round(p * 1000) / 1000 })) : [])),
           riichi: keys.map((_, ti) => riichiP(e, ti)),
+          dist: dists.map((d) => Object.fromEntries([...(d ?? new Map())].filter(([, p]) => p >= 0.005).map(([t, p]) => [t, Math.round(p * 1000) / 1000]))),
         };
         // 評価の分布は実際の打牌の評価を出すのにだけ使う
         (pending[actor] as NagaDecision & { _d?: (Map<string, number> | null)[] })._d = dists;
@@ -135,4 +138,18 @@ export async function fetchNagaReport(reportId: string): Promise<Report> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `レポートを読めませんでした（${res.status}）`);
   return body as Report;
+}
+
+/** その牌（アプリの牌の番号）を切る評価。dist が無ければ候補から探す */
+export function probOf(d: NagaDecision, ti: number, tile: number): number | null {
+  const name = tileToMjai(tile);
+  if (d.dist?.[ti]) return d.dist[ti][name] ?? 0;
+  const c = d.top[ti]?.find((x) => kindKey(x.tile) === name);
+  return c ? c.p : null;
+}
+/** アプリの牌の番号 → Mjai の牌名（赤五は普通の五） */
+export function tileToMjai(t: number): string {
+  if (t >= 51 && t <= 53) return `5${'mps'[t - 51]}`;
+  if (t >= 41) return 'ESWNPFC'[t - 41];
+  return `${t % 10}${'mps'[Math.floor(t / 10) - 1]}`;
 }

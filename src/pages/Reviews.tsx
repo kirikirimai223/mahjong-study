@@ -76,7 +76,7 @@ export function Reviews({ roundId, kyoku, honba, copyUrl }: { roundId: string; k
               <span className="grow">
                 <a href={r.report_url} target="_blank" rel="noopener"><b>{ENGINE[r.engine]}</b>{r.note ? `：${r.note}` : ''}</a>
                 {r.engine === 'naga' && (r.naga
-                  ? <small className="quiet"> 取り込み済み（{r.naga.types.join('・')}）</small>
+                  ? <><small className="quiet"> 取り込み済み（{r.naga.types.join('・')}）</small> <button className="link small-btn" disabled={busy === r.id} onClick={() => importNaga(r.id, r.report_url)}>取り込み直す</button></>
                   : nagaReportId(r.report_url) && <button className="link small-btn" disabled={busy === r.id} onClick={() => importNaga(r.id, r.report_url)}>結果を取り込む</button>)}
               </span>
               <button className="danger small-btn" onClick={() => remove(r.id)}>{isArmed(r.id) ? '本当に削除' : '削除'}</button>

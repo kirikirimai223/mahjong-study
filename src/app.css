@@ -114,3 +114,49 @@ button.chip { padding:3px 8px; font-size:12px; border-radius:999px; }
 .naga .row small { white-space:nowrap; }
 .naga-table .mark.ok { background:#dcfce7; color:#166534; }
 .naga-table .mark.ng { background:#fee2e2; color:#991b1b; }
+
+/* ---------- 振り返りの卓（NAGAの解析画面のような並べ方） ---------- */
+.rtable { --rw: 4.7cqw; --htw: 3.7cqw; position:relative; width:100%; max-width:560px; margin:10px auto; aspect-ratio:1; container-type:inline-size;
+  background:radial-gradient(circle at 50% 45%, #3b7a5a, #24543d); border-radius:12px; overflow:hidden; color:#fff; }
+.rtable .r-center { position:absolute; left:33%; top:33%; width:34%; height:34%; box-sizing:border-box; border-radius:6px; background:rgba(0,0,0,.35);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.2cqw; z-index:2; padding-bottom:5cqw; }
+.rtable .r-center b { font-size:4.4cqw; letter-spacing:.05em; }
+.rtable .r-center small { font-size:2.6cqw; color:#dfeee6; }
+.rtable .r-dora { display:flex; gap:.4cqw; --tw: 4cqw; }
+.rtable .r-dora .tile { --tw: 4cqw; }
+.rtable .r-end { font-size:3.6cqw; font-weight:700; padding:.2cqw 2cqw; border-radius:1cqw; background:#ffb020; color:#3a2600; }
+.rtable .r-end.ryukyoku { background:#94a3b8; color:#0f172a; }
+.rtable .r-layer { position:absolute; inset:0; pointer-events:none; transform-origin:50% 50%; }
+.rtable .r-label { position:absolute; left:33%; width:34%; top:61.5%; text-align:center; font-size:2.6cqw; line-height:1.2; z-index:3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#e6f2ea; }
+.rtable .r-label .w { font-weight:700; margin-right:.8cqw; }
+.rtable .r-label .sc { margin-left:1cqw; color:#ffd88a; }
+.rtable .r-label .d { margin-left:.8cqw; font-weight:700; }
+.rtable .r-label .d.p { color:#86efac; } .rtable .r-label .d.m { color:#fca5a5; }
+.rtable .r-label .guess { margin-left:.8cqw; padding:0 .8cqw; border:1px solid #fff; border-radius:1cqw; }
+.rtable .acting .r-label { color:#fff; font-weight:700; text-shadow:0 0 4px #ffb020; }
+.rtable .r-river { position:absolute; left:33.5%; top:67.5%; width:calc(var(--rw) * 6.5); display:flex; flex-wrap:wrap; align-content:flex-start; gap:.25cqw; }
+.rtable .r-river .tile { --tw: var(--rw); }
+.rtable .r-river .tile.ron { outline:2px solid #f43f5e; outline-offset:1px; }
+.rtable .r-hand { position:absolute; left:50%; bottom:1.2%; transform:translateX(-50%); display:flex; align-items:flex-end; gap:.15cqw; white-space:nowrap; }
+.rtable .r-hand .tile { --tw: var(--htw); }
+.rtable .r-hand.big { --htw: 5cqw; bottom:1.5%; }
+.rtable .r-hand.with-bars { bottom:5.2cqw; }
+.rtable .r-ht { position:relative; display:inline-flex; flex-direction:column; align-items:center; }
+.rtable .r-ht.drawn { margin-left:1.2cqw; }
+.rtable .r-gap { width:1.2cqw; }
+.rtable .r-meld { display:inline-flex; align-items:flex-end; margin-left:.6cqw; }
+.rtable .r-bar { position:absolute; top:100%; left:10%; width:80%; height:4.6cqw; display:flex; align-items:flex-start; justify-content:center; }
+.rtable .r-bar i { display:block; width:100%; background:#4ade80; border-radius:0 0 2px 2px; min-height:1px; }
+.rtable .r-bar em { position:absolute; top:.4cqw; font-style:normal; font-size:2.3cqw; font-weight:700; color:#052e16; }
+.rtable .tile.cut { outline:2px solid #f43f5e; outline-offset:1px; transform:translateY(-1.2cqw); }
+.rtable .tile.win { outline:2px solid #ffb020; outline-offset:1px; }
+.rtable .r-win { position:absolute; bottom:100%; margin-bottom:.6cqw; font-style:normal; font-size:2.6cqw; font-weight:700; color:#ffb020; }
+.review .viewsel { display:flex; align-items:center; gap:6px; font-size:13px; }
+.naga-hand { display:flex; align-items:flex-start; gap:2px; overflow-x:auto; padding:6px 2px 2px; background:var(--felt, #2f6b4f); border-radius:8px; --tw: min(24px, calc((100vw - 64px) / 15.5)); }
+.naga-hand .nh-t { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.naga-hand .nh-t.drawn { margin-left:6px; }
+.naga-hand .tile { --tw: min(24px, calc((100vw - 64px) / 15.5)); }
+.naga-hand .tile.cut { outline:2px solid #f43f5e; outline-offset:1px; transform:none; }
+.naga-hand .nh-bar { width:70%; height:26px; display:flex; align-items:flex-start; background:rgba(0,0,0,.18); border-radius:2px; }
+.naga-hand .nh-bar i { display:block; width:100%; background:#4ade80; border-radius:2px; }
+.naga-hand small { font-size:10px; color:#fff; min-height:12px; line-height:12px; }

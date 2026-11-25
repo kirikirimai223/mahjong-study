@@ -18,7 +18,7 @@ export function parseSources(text: string): ({ kind: 'json'; json: TenhouJson } 
   if (!t) return [];
   if (t.startsWith('{')) return [{ kind: 'json', json: checkJson(JSON.parse(t)) }];
   const out: ReturnType<typeof parseSources> = [];
-  for (const line of t.split(/\s+/).filter(Boolean)) {
+  for (const line of t.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)) {
     if (line.includes('#json=')) {
       const raw = decodeURIComponent(line.split('#json=')[1]).replace(/&ts=.*$/, '');
       out.push({ kind: 'json', json: checkJson(JSON.parse(raw)) });

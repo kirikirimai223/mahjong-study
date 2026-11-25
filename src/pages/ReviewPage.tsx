@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { parseTenhou } from '../core/tenhou';
-import { replayFrames, type ReplayFrame, type ReplaySeat } from '../core/replay';
+import { replayFrames, type ReplayFrame } from '../core/replay';
 import { errorText, supabase, type Member } from '../lib/supabase';
 import { useMember } from '../lib/auth';
 import { roundLabelOf, type RoundRow } from '../lib/data';
@@ -9,6 +9,7 @@ import { Tile, useTileCss } from '../lib/tiles';
 import { useConfirm } from '../lib/useConfirm';
 import { agrees, mjaiTile, type NagaDecision } from '../lib/naga';
 import type { StoredNaga } from './Reviews';
+import { NagaHand, ReviewTable } from './ReviewTable';
 
 type Position = { id: string; seat: number; discard_index: number; conclusion: string; conclusion_by: string | null; updated_at: string };
 type Comment = { id: string; position_id: string | null; author_id: string; speaker: string; body: string; tags: string[]; created_at: string };
@@ -31,6 +32,8 @@ export function ReviewPage() {
   const [seatFilter, setSeatFilter] = useState<number | 'all'>('all');
   const [naga, setNaga] = useState<StoredNaga | null>(null);
   const [nagaType, setNagaType] = useState(0);
+  // 手前に置く家：null＝自家（入力した人の席）、'follow'＝打牌した家に合わせて毎回回す
+  const [viewSeat, setViewSeat] = useState<number | 'follow' | null>(null);
 
   const loadNotes = useCallback(async () => {
     const [p, c] = await Promise.all([
@@ -133,8 +136,8 @@ export function ReviewPage() {
         <>
           <div className="card stack slider">
             <div className="row between">
-              <b>{WIND[(cur.seat - replay.log!.setup.kyoku % 4 + 4) % 4]}家 {names[cur.seat]}・{cur.discardIndex + 1}打目</b>
-              <small className="quiet">{cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}</small>
+              <b>{cur.end ? endTitle(cur, names) : `${WIND[(cur.seat - replay.log!.setup.kyoku % 4 + 4) % 4]}家 ${names[cur.seat]}・${cur.discardIndex + 1}打目`}</b>
+              <small className="quiet">{cur.end ? cur.end.points : cur.riichi ? '立直宣言' : cur.tsumogiri ? 'ツモ切り' : '手出し'}</small>
             </div>
             <input type="range" min={0} max={Math.max(0, shown.length - 1)} value={Math.max(0, shownPos)} onChange={(e) => go(shown[Number(e.target.value)].i)} />
             <div className="row between">
@@ -157,17 +160,27 @@ export function ReviewPage() {
             )}
           </div>
           {naga && (
-            <NagaPanel naga={naga} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
+            <NagaPanel naga={naga} frame={cur} decision={nagaOf.get(posKey(cur.seat, cur.discardIndex))} type={nagaType} setType={setNagaType}
               mismatches={frames.map((f, i) => ({ f, i })).filter(({ f }) => (seatFilter === 'all' || f.seat === seatFilter) && (() => { const d = nagaOf.get(posKey(f.seat, f.discardIndex)); return d && !agrees(d, nagaType); })())}
               names={names} curIndex={curIndex} go={go} />
           )}
-          <Board frame={cur} names={names} dealer={replay.log!.setup.kyoku % 4} dora={replay.log!.setup.doraIndicators} randomized={round!.randomized_seats} />
+          <div className="viewsel">
+            <small className="quiet">手前に置く家</small>
+            <select value={String(viewSeat ?? (seatFilter !== 'all' ? seatFilter : round!.editor.me ?? 0))} onChange={(e) => setViewSeat(e.target.value === 'follow' ? 'follow' : Number(e.target.value))} style={{ width: 'auto' }}>
+              {[0, 1, 2, 3].map((s) => <option key={s} value={s}>{names[s]}</option>)}
+              <option value="follow">打牌した家（毎回回す）</option>
+            </select>
+          </div>
+          <ReviewTable frame={cur} names={names} setup={replay.log!.setup} randomized={round!.randomized_seats}
+            view={viewSeat === 'follow' ? (cur.end?.winner ?? cur.seat) : viewSeat ?? (seatFilter !== 'all' ? seatFilter : round!.editor.me ?? 0)}
+            naga={nagaOf.get(posKey(cur.seat, cur.discardIndex))} nagaType={nagaType} />
+          {cur.end && cur.end.yaku.length > 0 && <p className="small">{cur.end.yaku.join('・')}</p>}
           <PositionNotes
             key={posKey(cur.seat, cur.discardIndex)}
             roundId={id!} seat={cur.seat} discardIndex={cur.discardIndex}
             position={positions.find((x) => x.seat === cur.seat && x.discard_index === cur.discardIndex)}
             comments={comments} members={members} meId={me.id} meName={me.display_name} onChanged={loadNotes}
-            title={`${names[cur.seat]}の${cur.discardIndex + 1}打目`}
+            title={cur.end ? endTitle(cur, names) : `${names[cur.seat]}の${cur.discardIndex + 1}打目`}
           />
         </>
       )}
@@ -186,8 +199,8 @@ function MTile({ p, cls = 'sm' }: { p: string | null; cls?: string }) {
 }
 
 /** NAGAの推奨と実際の打牌を並べる。違う打牌の局面へも飛べる */
-function NagaPanel({ naga, decision, type, setType, mismatches, names, curIndex, go }: {
-  naga: StoredNaga; decision: NagaDecision | undefined; type: number; setType: (n: number) => void;
+function NagaPanel({ naga, frame, decision, type, setType, mismatches, names, curIndex, go }: {
+  naga: StoredNaga; frame: ReplayFrame; decision: NagaDecision | undefined; type: number; setType: (n: number) => void;
   mismatches: { f: ReplayFrame; i: number }[]; names: string[]; curIndex: number; go: (i: number) => void;
 }) {
   return (
@@ -201,6 +214,12 @@ function NagaPanel({ naga, decision, type, setType, mismatches, names, curIndex,
           </select>
         </span>
       </div>
+      {decision && !frame.end && (
+        <div className="stack">
+          <small className="quiet">{names[frame.seat]}の手牌と、{naga.types[type]}の評価（%）。赤枠が実際に切った牌</small>
+          <NagaHand s={frame.seats[frame.seat]} naga={decision} nagaType={type} cutTile={frame.tile} />
+        </div>
+      )}
       {decision ? (
         <table className="naga-table">
           <thead><tr><th>タイプ</th><th>推奨</th><th>実際 <MTile p={decision.real} /></th><th>候補</th></tr></thead>
@@ -219,7 +238,7 @@ function NagaPanel({ naga, decision, type, setType, mismatches, names, curIndex,
             })}
           </tbody>
         </table>
-      ) : <p className="quiet small">この打牌にはNAGAの評価がありません（打牌が1つしか選べない局面など）</p>}
+      ) : <p className="quiet small">{frame.end ? '局の終わりです' : 'この打牌にはNAGAの評価がありません（打牌が1つしか選べない局面など）'}</p>}
       {mismatches.length > 0 && (
         <div className="chips">
           <small className="quiet">{naga.types[type]}と違う打牌（{mismatches.length}）：</small>
@@ -232,39 +251,10 @@ function NagaPanel({ naga, decision, type, setType, mismatches, names, curIndex,
   );
 }
 
-function Board({ frame, names, dealer, dora, randomized }: { frame: ReplayFrame; names: string[]; dealer: number; dora: number[]; randomized: number[] }) {
-  return (
-    <div className="board">
-      <div className="dora"><small>ドラ表示</small>{dora.map((t, i) => <Tile key={i} t={t} cls="sm" />)}</div>
-      {frame.seats.map((s, seat) => (
-        <SeatView key={seat} s={s} seat={seat} active={seat === frame.seat} cutTile={seat === frame.seat ? frame.tile : undefined}
-          title={`${WIND[(seat - dealer + 4) % 4]} ${names[seat]}`} guessed={randomized.includes(seat)} />
-      ))}
-      {randomized.length > 0 && <p className="quiet small">「仮」の家は、入力していない配牌・ツモをランダムで補っています。手牌の中身は実際と違う場合があります。</p>}
-    </div>
-  );
-}
-
-function SeatView({ s, seat, active, cutTile, title, guessed }: { s: ReplaySeat; seat: number; active: boolean; cutTile?: number; title: string; guessed: boolean }) {
-  // 切った牌を1枚だけ強調する（ツモ切りならツモ牌、手出しなら手牌の同じ牌）
-  const cutDrawn = active && s.drawn !== undefined && s.drawn === cutTile;
-  const cutAt = active && !cutDrawn ? s.hand.indexOf(cutTile!) : -1;
-  const rows: typeof s.river[] = [];
-  for (let i = 0; i < s.river.length; i += 6) rows.push(s.river.slice(i, i + 6));
-  return (
-    <section className={`seat ${active ? 'active' : ''}`} data-seat={seat}>
-      <div className="row between"><b>{title}</b>{guessed && <small className="tag">仮</small>}{s.riichi && <small className="tag riichi">立直</small>}</div>
-      <div className="hand">
-        {s.hand.map((t, i) => <Tile key={i} t={t} cls={i === cutAt ? 'cut' : ''} />)}
-        {s.drawn !== undefined && <><span className="gap" /><Tile t={s.drawn} cls={cutDrawn ? 'cut' : ''} /></>}
-        {s.melds.length > 0 && <span className="gap" />}
-        {s.melds.map((m, i) => <span key={i} className="meld">{m.tiles.map((t, j) => <Tile key={j} t={t} cls={`sm ${m.kind === 'ankan' && (j === 0 || j === 3) ? 'back' : ''}`} />)}</span>)}
-      </div>
-      <div className="river">
-        {rows.map((r, i) => <div key={i}>{r.map((x, j) => <Tile key={j} t={x.tile} cls={`sm ${x.riichi ? 'yoko' : ''} ${x.tsumogiri ? 'tg' : ''} ${x.called ? 'called' : ''}`} />)}</div>)}
-      </div>
-    </section>
-  );
+function endTitle(f: ReplayFrame, names: string[]) {
+  const e = f.end!;
+  if (e.kind === 'ryukyoku') return `流局（${e.points}）`;
+  return e.kind === 'tsumo' ? `${names[e.winner!]}のツモ和了` : `${names[e.winner!]}のロン和了（${names[e.from!]}から）`;
 }
 
 function PositionNotes({ roundId, seat, discardIndex, position, comments, members, meId, meName, onChanged, title }: {

@@ -11,9 +11,9 @@ async def main():
         await pg.wait_for_url('**/rounds/*'); await pg.wait_for_selector('.round-page')
         await pg.select_option('[data-act=samplesel]', '0'); await pg.wait_for_timeout(200)  # 南三局（チー・立直）
         await pg.click('.roundbar button:has-text("保存")'); await pg.wait_for_timeout(500)
-        await pg.click('.roundbar a:has-text("振り返り")'); await pg.wait_for_selector('.board')
+        await pg.click('.roundbar a:has-text("振り返り")'); await pg.wait_for_selector('.rtable')
         print('title:', await pg.inner_text('.review h2'))
-        print('first:', await pg.inner_text('.slider b'), '| active seat tiles:', await pg.locator('.seat.active .hand .tile').count(), '| cut:', await pg.locator('.seat.active .cut').count())
+        print('first:', await pg.inner_text('.slider b'), '| active seat tiles:', await pg.locator('.r-layer.acting .r-hand .tile').count(), '| cut:', await pg.locator('.r-layer.acting .cut').count())
         n = int(await pg.get_attribute('.slider input[type=range]', 'max')) + 1
         r = db['study_rounds'][0]['editor']; total = sum(len(s['river']) for s in r['seats'])
         print('frames:', n, 'editor river total:', total)
@@ -44,7 +44,7 @@ async def main():
         await pg.fill('textarea[placeholder="この局全体へのコメント"]', '南三局の点数状況を確認'); await pg.click('.notes >> nth=1 >> button:has-text("コメントする")'); await pg.wait_for_timeout(300)
         print('round comment:', [(x['body'], x['position_id']) for x in db['study_comments'] if x['position_id'] is None])
         # 局面リンク（URL）で開き直すと同じ局面
-        url = pg.url; await pg.goto(url); await pg.wait_for_selector('.board')
+        url = pg.url; await pg.goto(url); await pg.wait_for_selector('.rtable'); await pg.wait_for_timeout(500)
         print('reopen:', await pg.inner_text('.slider b'), '| comment shown:', '2件目（直した）' in await pg.inner_text('.notes >> nth=0'))
         await pg.screenshot(path='/tmp/stage4.png', full_page=True)
         await pg.click('text=← 勉強会'); await pg.wait_for_selector('.game')

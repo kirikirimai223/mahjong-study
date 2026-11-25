@@ -24,6 +24,19 @@ export interface ReplayFrame {
   riichi: boolean;
   /** 打牌の直前の4家 */
   seats: [ReplaySeat, ReplaySeat, ReplaySeat, ReplaySeat];
+  /** 局の終わり（最後の1コマだけ）：和了ならツモった牌・ロンした牌まで、流局ならその種類 */
+  end?: ReplayEnd;
+}
+export interface ReplayEnd {
+  kind: 'tsumo' | 'ron' | 'ryukyoku';
+  winner?: Seat;
+  from?: Seat;
+  /** 和了牌 */
+  tile?: Tile;
+  /** 点数（例：満貫2000-4000点）と役、流局の種類 */
+  points: string;
+  yaku: string[];
+  deltas: number[];
 }
 
 const sortTiles = (a: Tile[]) => [...a].sort((x, y) => kindOf(x) - kindOf(y) || x - y);
@@ -43,6 +56,7 @@ export function replayFrames(log: RoundLog): ReplayFrame[] {
   const riichi = [false, false, false, false];
   const frames: ReplayFrame[] = [];
   let lastDiscard: { seat: Seat; idx: number } | null = null;
+  let lastKakan: Tile | null = null; // 槍槓の和了牌（最後の出来事が加槓なら）
 
   const snapshot = () => [0, 1, 2, 3].map((s) => ({
     hand: sortTiles(hands[s]),
@@ -77,17 +91,39 @@ export function replayFrames(log: RoundLog): ReplayFrame[] {
     if (e.kind === 'kakan') {
       takeIn();
       removeOne(hands[s], e.added);
+      lastKakan = e.added;
       const pon = melds[s].find((m) => m.kind === 'pon' && kindOf(m.called!) === kindOf(e.called));
       if (pon) { pon.kind = 'kakan'; pon.tiles.push(e.added); } else melds[s].push({ kind: 'kakan', tiles: [e.called, ...e.own, e.added] });
       continue;
     }
     const tile = ev.tile ?? e.tile;
+    lastKakan = null;
     frames.push({ seat: s, discardIndex: rivers[s].length, tile, tsumogiri: e.tsumogiri, riichi: e.riichi, seats: snapshot() });
     takeIn();
     removeOne(hands[s], tile);
     rivers[s].push({ tile, tsumogiri: e.tsumogiri, riichi: e.riichi, called: false });
     if (e.riichi) riichi[s] = true;
     lastDiscard = { seat: s, idx: rivers[s].length - 1 };
+  }
+  // 局の終わり：和了した家の手牌に和了牌（ツモならツモった牌、ロンなら放銃牌）を並べた1コマを足す
+  const raw = log.result.raw as unknown[];
+  if (log.result.kind === 'agari') {
+    const info = raw[2] as (number | string)[];
+    const w = info[0] as Seat; const from = info[1] as Seat;
+    const tsumo = w === from;
+    const tile = tsumo ? drawn[w] : lastKakan ?? (lastDiscard ? rivers[lastDiscard.seat][lastDiscard.idx].tile : undefined);
+    const seats = snapshot();
+    if (tsumo) seats[w].drawn = tile;
+    frames.push({
+      seat: w, discardIndex: rivers[w].length, tile: tile ?? 0, tsumogiri: false, riichi: false, seats,
+      end: { kind: tsumo ? 'tsumo' : 'ron', winner: w, from, tile, points: String(info[3] ?? ''), yaku: info.slice(4).map(String), deltas: (raw[1] as number[]) ?? [] },
+    });
+  } else {
+    const dealer = (log.setup.kyoku % 4) as Seat;
+    frames.push({
+      seat: dealer, discardIndex: rivers[dealer].length, tile: 0, tsumogiri: false, riichi: false, seats: snapshot(),
+      end: { kind: 'ryukyoku', points: String(raw[0] ?? '流局'), yaku: [], deltas: (raw[1] as number[]) ?? [0, 0, 0, 0] },
+    });
   }
   return frames;
 }
