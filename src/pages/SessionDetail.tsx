@@ -295,17 +295,21 @@ function ImportPaifu({ sessionId, onDone }: { sessionId: string; onDone: (msg: s
       if (!games.length) throw new Error('取り込む牌譜がありません');
       const n = await saveImported(sessionId, games);
       setText('');
-      onDone(`半荘${n.games}つ・${n.rounds}局を取り込みました${n.naga ? `（NAGAの結果${n.naga}局ぶんも）` : ''}`);
+      onDone([
+        n.games ? `半荘${n.games}つ・${n.rounds}局を取り込みました` : '',
+        n.reused ? `${n.reused}局はもうこの勉強会にあったので、牌譜はそのまま` : '',
+        n.naga ? `NAGAの結果を${n.naga}局に付けました` : '',
+      ].filter(Boolean).join('。'));
     } catch (e) { setErr(errorText(e)); }
     setBusy(false);
   }
   return (
-    <details className="import">
-      <summary>既にある牌譜を取り込む</summary>
+    <details className="import" open>
+      <summary>既にある牌譜を取り込む（NAGAのレポートなら解析結果も一緒に）</summary>
       <p className="quiet small">次のどれかを貼ってください（1行に1つ、何行でも）。天鳳牌譜エディタの局は、同じ4人なら1つの半荘にまとめます。</p>
       <ul className="quiet small">
         <li>天鳳牌譜エディタのURL（https://tenhou.net/6/#json=…）や、そのJSON</li>
-        <li>NAGAの解析レポートのURL（牌譜と解析結果をまとめて取り込みます）</li>
+        <li>NAGAの解析レポートのURL（牌譜と解析結果をまとめて取り込みます。同じ牌譜がもうあれば、解析結果だけ付けます）</li>
         <li>天鳳の対局のURL（https://tenhou.net/0/?log=…）</li>
       </ul>
       <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="https://tenhou.net/6/#json=… など" />

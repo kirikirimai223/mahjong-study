@@ -13,7 +13,7 @@ async def main():
         b, ctx, pg, errs = await open_app(p)
         await ctx.route('**/api/naga-report**', lambda route: route.fulfill(json=REPORT))
         await pg.click('button:has-text("新しい勉強会")'); await pg.fill('input[placeholder="例：押し引き"]', 't'); await pg.click('button:has-text("作成")')
-        await pg.click('.link-card'); await pg.click('summary:has-text("既にある牌譜を取り込む")')
+        await pg.click('.link-card'); await pg.wait_for_selector('details.import[open] textarea')
         await pg.fill('details.import textarea', 'https://tenhou.net/6/#json=' + urllib.parse.quote(json.dumps(JSON, ensure_ascii=False)))
         await pg.click('details.import button:has-text("取り込む")'); await pg.wait_for_selector('.toast')
         r = db['study_rounds'][0]
@@ -31,6 +31,13 @@ async def main():
         await pg.wait_for_selector('.toast:has-text("NAGAの結果")')
         toast = await pg.inner_text('.toast')
         out['game'] = '1局にNAGAの結果' in toast and len(db['study_ai_reviews']) == 1
+        # 3. 牌譜がもうある勉強会に、取り込み欄からNAGAのレポートを貼る → 半荘は増やさず、結果だけ付け直す
+        db['study_ai_reviews'].clear()
+        await pg.fill('details.import textarea', URL)
+        await pg.click('details.import button:has-text("取り込む")')
+        await pg.wait_for_selector('.toast:has-text("もうこの勉強会にあった")')
+        t3 = await pg.inner_text('.toast')
+        out['reuse'] = len(db['study_games']) == 1 and len(db['study_rounds']) == 1 and len(db['study_ai_reviews']) == 1 and 'NAGAの結果を1局に付けました' in t3
         out['errors'] = errs
         await b.close()
     print(json.dumps({'ok': all(v is True for k, v in out.items() if k != 'errors') and not out['errors'], **out, 'toast': toast}, ensure_ascii=False))

@@ -114,10 +114,36 @@ export function roundRows(g: ImportGame) {
 /** 取り込んだ牌譜を、この勉強会の半荘・局として保存する（NAGAの結果があれば、局ごとの解析レポートとして付ける） */
 export async function saveImported(sessionId: string, games: ImportGame[]) {
   const { supabase } = await import('./supabase');
-  let nGames = 0; let nRounds = 0; let nNaga = 0;
+  let nGames = 0; let nRounds = 0; let nNaga = 0; let nReused = 0;
+  // すでにこの勉強会にある局（同じ牌譜）を探す：NAGAのレポートを後から貼ったときは、新しい半荘を作らずにその局へ結果を付ける
+  const gs = await supabase.from('study_games').select('id').eq('session_id', sessionId);
+  if (gs.error) throw gs.error;
+  const existing = gs.data?.length
+    ? await supabase.from('study_rounds').select('id, tenhou_json').in('game_id', gs.data.map((x) => x.id))
+    : { data: [] as { id: string; tenhou_json: unknown }[], error: null };
+  if (existing.error) throw existing.error;
+  const keyOf = (j: unknown) => JSON.stringify((j as { log?: unknown[] } | null)?.log?.[0] ?? null);
+  const byLog = new Map((existing.data ?? []).filter((r) => r.tenhou_json).map((r) => [keyOf(r.tenhou_json), r.id as string]));
   for (const g of games) {
     const rows = roundRows(g);
     if (!rows.length) continue;
+    const same = rows.map((r) => byLog.get(keyOf(r.row.tenhou_json)));
+    if (same.every(Boolean)) {
+      // 全部の局がもうある：牌譜は作らず、NAGAの結果だけ付ける（同じレポートは置き換え）
+      nReused += rows.length;
+      for (const [i, r] of rows.entries()) {
+        if (!r.naga || !g.reportUrl) continue;
+        const old = await supabase.from('study_ai_reviews').select('id, naga').eq('round_id', same[i]!).eq('engine', 'naga');
+        if (old.error) throw old.error;
+        const hit = (old.data ?? []).find((x) => (x.naga as { reportId?: string } | null)?.reportId === r.naga!.reportId);
+        const res = hit
+          ? await supabase.from('study_ai_reviews').update({ naga: r.naga, report_url: g.reportUrl }).eq('id', hit.id)
+          : await supabase.from('study_ai_reviews').insert({ round_id: same[i]!, engine: 'naga', report_url: g.reportUrl, note: '', naga: r.naga });
+        if (res.error) throw res.error;
+        nNaga++;
+      }
+      continue;
+    }
     const first = rows[0].row.editor;
     const gi = await supabase.from('study_games').insert({ session_id: sessionId, name: g.name, rule: first.rule, player_names: first.names }).select('id').single();
     if (gi.error) throw gi.error;
@@ -132,5 +158,5 @@ export async function saveImported(sessionId: string, games: ImportGame[]) {
       nNaga += reviews.length;
     }
   }
-  return { games: nGames, rounds: nRounds, naga: nNaga };
+  return { games: nGames, rounds: nRounds, naga: nNaga, reused: nReused };
 }

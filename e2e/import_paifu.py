@@ -16,7 +16,7 @@ async def main():
         await ctx.route('**/api/naga-report**', lambda route: route.fulfill(json=REPORT))
         await pg.click('button:has-text("新しい勉強会")'); await pg.fill('input[placeholder="例：押し引き"]', '取り込みテスト'); await pg.click('button:has-text("作成")')
         await pg.click('.link-card'); await pg.wait_for_selector('summary:has-text("既にある牌譜を取り込む")')
-        await pg.click('summary:has-text("既にある牌譜を取り込む")')
+        await pg.wait_for_selector('details.import[open] textarea')
         text = '\n'.join([URLS[k] for k in ('SAMPLE', 'KAN', 'RINSHAN', 'CHANKAN')] + [f'https://naga.dmv.nico/htmls/report_viewer.html?report_id={RID}&tw=0'])
         await pg.fill('details.import textarea', text)
         await pg.click('details.import button:has-text("取り込む")')
