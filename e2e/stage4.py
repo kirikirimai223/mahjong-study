@@ -17,10 +17,10 @@ async def main():
         n = int(await pg.get_attribute('.slider input[type=range]', 'max')) + 1
         r = db['study_rounds'][0]['editor']; total = sum(len(s['river']) for s in r['seats'])
         print('frames:', n, 'editor river total:', total)
-        for _ in range(5): await pg.click('button:has-text("次 ▶")'); await pg.wait_for_timeout(150)
+        for _ in range(5): await pg.click('button[aria-label="次"]'); await pg.wait_for_timeout(150)
         print('after 5 next:', await pg.inner_text('.slider b'), pg.url.split('?')[1])
         # この家の打牌だけ
-        await pg.select_option('.slider select', '3'); await pg.click('button:has-text("次 ▶")'); await pg.wait_for_timeout(300)
+        await pg.select_option('.rv-opts select >> nth=0', '3'); await pg.click('button[aria-label="次"]'); await pg.wait_for_timeout(300)
         print('seat3 filter:', await pg.inner_text('.slider b'))
         # 局面コメント（タグ付き）と結論
         await pg.fill('.notes >> nth=0 >> textarea[placeholder="この局面へのコメント"]', 'ここは押してよかった？')
@@ -32,7 +32,7 @@ async def main():
         print('positions:', [(x['seat'], x['discard_index'], x['conclusion']) for x in db['study_positions']])
         print('comments:', [(x['speaker'], x['body'], x['tags'], x['position_id'] is not None) for x in db['study_comments']])
         print('note view:', (await pg.inner_text('.notes >> nth=0'))[:200].replace('\n', ' / '))
-        print('chips:', await pg.inner_text('.slider .chips'))
+        print('chips:', await pg.inner_text('main.review > .chips'))
         # 同じ局面への2件目（同じ position を使う）
         await pg.fill('.notes >> nth=0 >> textarea[placeholder="この局面へのコメント"]', '2件目'); await pg.click('.notes >> nth=0 >> button:has-text("コメントする")'); await pg.wait_for_timeout(300)
         print('positions after 2nd:', len(db['study_positions']), 'comments:', len(db['study_comments']))
